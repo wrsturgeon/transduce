@@ -3,9 +3,16 @@
 
 See this example from `lib.rs`:
 ```rust
-(exact('(') >> anything() << exact(')')).parse("(*)".chars())
+let parser = exact('(') >> anything() << exact(')');
+let rawstr = "(*)";
+assert_eq!(parser.parse(rawstr.chars()), Ok('*'));
 ```
 This does exactly what it looks like it does.
+
+Equivalently,
+```rust
+assert_eq!(parenthesized(anything()).parse(rawstr.chars()), Ok('*'))
+```
 
 Huge shoutout to UPenn's CIS 194 (which I was lucky enough to take as an enrolled student, because apparently the course is famous?!), and Haskell's innovative higher-order parsing libraries, which I learned in 194.
 

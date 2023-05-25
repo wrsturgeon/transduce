@@ -9,8 +9,11 @@
 //! Want to parse something in parentheses? Surround it in parentheses:
 //! ```rust
 //! use transduce::prelude::*;
-//! # fn main() -> transduce::result::Result<()> {
-//! (exact('(') >> anything() << exact(')')).parse("(*)".chars())
+//! # fn main() {
+//! let parser = exact('(') >> anything() << exact(')');
+//! let rawstr = "(*)";
+//! assert_eq!(parser.parse(rawstr.chars()), Ok('*'));
+//! assert_eq!(parenthesized(anything()).parse(rawstr.chars()), Ok('*'));
 //! # }
 //! ```
 
@@ -26,6 +29,7 @@
     rustdoc::all
 )]
 #![allow(
+    clippy::arithmetic_side_effects,
     clippy::blanket_clippy_restriction_lints,
     clippy::implicit_return,
     clippy::inline_always,
@@ -40,7 +44,7 @@ pub mod result;
 
 /// Bring these into scope in each file with `use transduce::prelude::*;`.
 pub mod prelude {
-    pub use super::{anything, exact, Parser};
+    pub use super::{anything, exact, parenthesized, Parser};
 }
 
 /// Make a function that _returns a function that_ parses an element in a list.
@@ -145,7 +149,14 @@ parse_fn! {
 }
 
 parse_fn! {
-    /// Match any single character and discard it.
-    pub fn anything<I>() -> I => ()
-    |_| ()
+    /// Match any single item and return it.
+    pub fn anything<I>() -> I => I
+    |i| i
+}
+
+/// Match an expression in parentheses.
+#[inline(always)]
+#[must_use]
+pub fn parenthesized<O>(p: Parser<char, O>) -> Parser<char, O> {
+    exact('(') >> p << exact(')')
 }
