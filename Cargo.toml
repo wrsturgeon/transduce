@@ -1,0 +1,15 @@
+[package]
+name = "transduce"
+version = "0.1.0"
+authors = ["Will Sturgeon <willstrgn@gmail.com>"]
+edition = "2021"
+description = "Isomorphic parsing: your code should look like what it parses."
+license = "MPL-2.0"
+repository = "https://github.com/wrsturgeon/transduce"
+readme = "README.md"
+keywords = ["types", "proofs", "math", "logic", "metaprogramming"]
+categories = ["mathematics", "encoding", "no-std", "compilers", "data-structures"]
+build = "build.rs"
+
+[dependencies]
+rsmonad = ">=0.2"
