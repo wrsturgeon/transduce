@@ -14,9 +14,9 @@ Equivalently,
 assert_eq!(parenthesized(anything()).parse(rawstr.chars()), Ok('*'))
 ```
 
-Huge shoutout to UPenn's CIS 194 and Haskell's higher-order parsing libraries (which I learned in 194).
+Huge shoutout to UPenn's CIS 194 and Haskell's higher-order parsing libraries I learned in 194.
 
 ### Future improvements
 
-Removing boxed closures once [https://github.com/rust-lang/rust/issues/63063](this) goes through.
+Removing boxed closures once [this feature](https://github.com/rust-lang/rust/issues/63063) is stabilized.
 I haven't benchmarked yet, but when the name of a type fills almost the entire screen and encodes a needless abstraction with runtime cost, it's gotta go on _moral principle_.
