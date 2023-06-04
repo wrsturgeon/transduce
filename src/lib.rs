@@ -96,6 +96,7 @@ pub struct Parser<
 >(
     #[cfg(feature = "nightly")] Call,
     #[cfg(not(feature = "nightly"))]
+    #[allow(clippy::type_complexity)]
     Box<dyn FnOnce(&mut Peekable<Stream>) -> result::Result<Output>>,
     PhantomData<Input>,
     PhantomData<Output>,
@@ -206,7 +207,7 @@ impl<Input, Output: 'static, Stream: 'static + Iterator<Item = Input>>
     pub fn discard_right<RightOutput: 'static>(
         self,
         right: Parser<Input, RightOutput, Stream>,
-    ) -> Parser<Input, Output, Stream> {
+    ) -> Self {
         #![allow(clippy::question_mark_used)]
         Self::new(move |stream| {
             let result = self.0(stream)?;
@@ -234,6 +235,7 @@ impl<
         impl FnOnce(&mut Peekable<Stream>) -> result::Result<RightOutput>,
     >;
     #[inline(always)]
+    #[must_use]
     fn shr(self, rhs: Parser<Input, RightOutput, Stream, RightCall>) -> Self::Output {
         self.discard_left(rhs)
     }
@@ -245,6 +247,7 @@ impl<Input, Output, Stream: Iterator<Item = Input>, RightOutput>
 {
     type Output = Parser<Input, RightOutput, Stream>;
     #[inline(always)]
+    #[must_use]
     fn shr(self, rhs: Parser<Input, RightOutput, Stream>) -> Self::Output {
         self.discard_left(rhs)
     }
@@ -264,6 +267,7 @@ impl<
     type Output =
         Parser<Input, Output, Stream, impl FnOnce(&mut Peekable<Stream>) -> result::Result<Output>>;
     #[inline(always)]
+    #[must_use]
     fn shl(self, rhs: Parser<Input, RightOutput, Stream, RightCall>) -> Self::Output {
         self.discard_right(rhs)
     }
@@ -275,6 +279,7 @@ impl<Input, Output, Stream: Iterator<Item = Input>, RightOutput>
 {
     type Output = Self;
     #[inline(always)]
+    #[must_use]
     fn shl(self, rhs: Parser<Input, RightOutput, Stream>) -> Self::Output {
         self.discard_right(rhs)
     }
@@ -282,6 +287,8 @@ impl<Input, Output, Stream: Iterator<Item = Input>, RightOutput>
 
 #[cfg(feature = "nightly")]
 /// Match an exact value (via `PartialEq`) and discard it.
+#[inline(always)]
+#[must_use]
 pub fn exact<Stream: Iterator<Item = char>>(
     expect: char,
 ) -> Parser<char, (), Stream, impl FnOnce(&mut Peekable<Stream>) -> result::Result> {
@@ -300,6 +307,8 @@ pub fn exact<Stream: Iterator<Item = char>>(
 
 #[cfg(not(feature = "nightly"))]
 /// Match an exact value (via `PartialEq`) and discard it.
+#[inline(always)]
+#[must_use]
 pub fn exact<Stream: Iterator<Item = char>>(expect: char) -> Parser<char, (), Stream> {
     #[allow(clippy::as_conversions)]
     Parser::new(move |stream| match stream.next() {
