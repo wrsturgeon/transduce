@@ -7,7 +7,7 @@
 //! Result type returning an error with a backtrace.
 
 /// Result: either an `A` or a `String`.
-pub type Result<A> = ::core::result::Result<A, String>;
+pub type Result<A = ()> = ::core::result::Result<A, String>;
 
 /// Immediately return with an error.
 #[macro_export]

@@ -14,9 +14,9 @@ Equivalently,
 assert_eq!(parenthesized(anything()).parse(rawstr.chars()), Ok('*'))
 ```
 
-Huge shoutout to UPenn's CIS 194 (which I was lucky enough to take as an enrolled student, because apparently the course is famous?!), and Haskell's innovative higher-order parsing libraries, which I learned in 194.
+Huge shoutout to UPenn's CIS 194 and Haskell's higher-order parsing libraries (which I learned in 194).
 
-### Points for further improvement
+### Future improvements
 
-Boxed closures. Pains in the asses. I haven't run any performance comparisons, but when the name of a type fills almost the entire screen and encodes a needless abstraction with runtime cost, it's on _moral principle_ that I oppose it.
-See `need-impl-in-alias.rs` for a better design that fails so far only because `impl Trait` can't yet be used in `type =` expressions in stable Rust, and we need it to return a closure.
+Removing boxed closures once [https://github.com/rust-lang/rust/issues/63063](this) goes through.
+I haven't benchmarked yet, but when the name of a type fills almost the entire screen and encodes a needless abstraction with runtime cost, it's gotta go on _moral principle_.
