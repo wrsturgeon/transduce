@@ -8,7 +8,7 @@
 //! ## Examples
 //! Want to parse something in parentheses? Surround it in parentheses:
 //! ```rust
-//! use transduce::prelude::*;
+//! use transduce::base::*;
 //! # fn main() {
 //! let parser = exact('(') >> anything() << exact(')');
 //! let rawstr = "(*)";
@@ -48,15 +48,15 @@
 macro_rules! parse_fn {
     (
         $(#[$meta:meta])*
-        $($pub:ident)? fn $name:ident$(<$($gen:ident$(: $bound:ident $(+ $bounds:path)*)?),*>)?($($arg:ident: $arg_t:ty),*) -> ($Input:ty => $Output:ty)
+        $($pub:ident)? fn $name:ident$(<$($gen:ident$(: $($lt:lifetime +)? $bound:ident $(+ $bounds:path)*)?),*>)?($($arg:ident: $arg_t:ty),*) -> ($Input:ty => $Output:ty)
         $body:block
     ) => {
         #[inline(always)]
         #[must_use]
         $(#[$meta])*
-        $($pub)? fn $name<Stream: ::core::iter::Iterator<Item = $Input>, $($($gen$(: $bound $(+ $bounds)*)?),*)?>(
+        $($pub)? fn $name<Stream: ::core::iter::Iterator<Item = $Input>, $($($gen$(: $($lt +)? $bound $(+ $bounds)*)?),*)?>(
             $($arg: $arg_t),*
-        ) -> Parser<$Input, $Output, Stream, impl ::core::ops::FnOnce(&mut ::core::iter::Peekable<Stream>) -> $crate::result::Result<$Output>> $body
+        ) -> $crate::Parser<$Input, $Output, Stream, impl ::core::ops::FnOnce(&mut ::core::iter::Peekable<Stream>) -> $crate::result::Result<$Output>> $body
     };
 }
 
@@ -66,24 +66,20 @@ macro_rules! parse_fn {
 macro_rules! parse_fn {
     (
         $(#[$meta:meta])*
-        $($pub:ident)? fn $name:ident$(<$($gen:ident$(: $bound:ident $(+ $bounds:path)*)?),*>)?($($arg:ident: $arg_t:ty),*) -> ($Input:ty => $Output:ty)
+        $($pub:ident)? fn $name:ident$(<$($gen:ident$(: $($lt:lifetime +)? $bound:ident $(+ $bounds:path)*)?),*>)?($($arg:ident: $arg_t:ty),*) -> ($Input:ty => $Output:ty)
         $body:block
     ) => {
         #[inline(always)]
         #[must_use]
         $(#[$meta])*
-        $($pub)? fn $name<Stream: ::core::iter::Iterator<Item = $Input>, $($($gen$(: $bound $(+ $bounds)*)?),*)?>(
+        $($pub)? fn $name<Stream: ::core::iter::Iterator<Item = $Input>, $($($gen$(: $($lt +)? $bound $(+ $bounds)*)?),*)?>(
             $($arg: $arg_t),*
-        ) -> Parser<$Input, $Output, Stream> $body
+        ) -> $crate::Parser<$Input, $Output, Stream> $body
     };
 }
 
+pub mod base;
 pub mod result;
-
-/// Bring these into scope in each file with `use transduce::prelude::*;`.
-pub mod prelude {
-    pub use super::{anything, exact, parenthesized, Parser};
-}
 
 use ::core::{iter::Peekable, marker::PhantomData};
 
@@ -283,132 +279,4 @@ impl<Input, Output, Stream: Iterator<Item = Input>, RightOutput>
     fn shl(self, rhs: Parser<Input, RightOutput, Stream>) -> Self::Output {
         self.discard_right(rhs)
     }
-}
-
-#[cfg(feature = "nightly")]
-/// Match an exact value (via `PartialEq`) and discard it.
-#[inline(always)]
-#[must_use]
-pub fn exact<Stream: Iterator<Item = char>>(
-    expect: char,
-) -> Parser<char, (), Stream, impl FnOnce(&mut Peekable<Stream>) -> result::Result> {
-    #[allow(clippy::as_conversions)]
-    Parser::new(move |stream| match stream.next() {
-        None => bail!("Reached end of input while still parsing"),
-        Some(actual) => {
-            if actual == expect {
-                Ok(())
-            } else {
-                bail!("`exact` failed: expected `{expect:#?}` but found `{actual:#?}`")
-            }
-        }
-    })
-}
-
-#[cfg(not(feature = "nightly"))]
-/// Match an exact value (via `PartialEq`) and discard it.
-#[inline(always)]
-#[must_use]
-pub fn exact<Stream: Iterator<Item = char>>(expect: char) -> Parser<char, (), Stream> {
-    #[allow(clippy::as_conversions)]
-    Parser::new(move |stream| match stream.next() {
-        None => bail!("Reached end of input while still parsing"),
-        Some(actual) => {
-            if actual == expect {
-                Ok(())
-            } else {
-                bail!("`exact` failed: expected `{expect:#?}` but found `{actual:#?}`")
-            }
-        }
-    })
-}
-
-parse_fn! {
-    /// Match any single item and return it.
-    pub fn anything<I>() -> (I => I) {
-        Parser::new(|stream| stream.next().ok_or_else(|| "Reached end of input while still parsing".to_owned()))
-    }
-}
-
-#[cfg(feature = "nightly")]
-/// Match an expression in parentheses.
-#[inline(always)]
-#[must_use]
-pub fn parenthesized<
-    Output,
-    Stream: Iterator<Item = char>,
-    Call: FnOnce(&mut Peekable<Stream>) -> result::Result<Output>,
->(
-    p: Parser<char, Output, Stream, Call>,
-) -> Parser<char, Output, Stream, impl FnOnce(&mut Peekable<Stream>) -> result::Result<Output>> {
-    exact('(') >> p << exact(')')
-}
-
-#[cfg(not(feature = "nightly"))]
-/// Match an expression in parentheses.
-#[inline(always)]
-#[must_use]
-pub fn parenthesized<Output, Stream: Iterator<Item = char>>(
-    p: Parser<char, Output, Stream>,
-) -> Parser<char, Output, Stream> {
-    exact('(') >> p << exact(')')
-}
-
-#[cfg(feature = "nightly")]
-/// Skip zero or more items while this predicate holds on them. Do not skip the first one that doesn't hold (just peek, don't consume prematurely).
-#[inline(always)]
-#[must_use]
-pub fn skip_while<Input, Predicate: Fn(&Input) -> bool, Stream: Iterator<Item = Input>>(
-    pred: Predicate,
-) -> Parser<Input, (), Stream, impl FnOnce(&mut Peekable<Stream>) -> result::Result> {
-    Parser::new(move |stream| {
-        while pred(
-            stream
-                .peek()
-                .ok_or_else(|| "Reached end of input while still parsing".to_owned())?,
-        ) {
-            stream.next();
-        }
-        Ok(())
-    })
-}
-
-#[cfg(not(feature = "nightly"))]
-/// Skip zero or more items while this predicate holds on them. Do not skip the first one that doesn't hold (just peek, don't consume prematurely).
-#[inline(always)]
-#[must_use]
-pub fn skip_while<
-    Input,
-    Predicate: 'static + Fn(&Input) -> bool,
-    Stream: Iterator<Item = Input>,
->(
-    pred: Predicate,
-) -> Parser<Input, (), Stream> {
-    Parser::new(move |stream| {
-        while pred(
-            stream
-                .peek()
-                .ok_or_else(|| "Reached end of input while still parsing".to_owned())?,
-        ) {
-            stream.next();
-        }
-        Ok(())
-    })
-}
-
-#[cfg(feature = "nightly")]
-/// Zero or more whitespace characters.
-#[inline(always)]
-#[must_use]
-pub fn whitespace<Stream: Iterator<Item = char>>(
-) -> Parser<char, (), Stream, impl FnOnce(&mut Peekable<Stream>) -> result::Result> {
-    skip_while(|c| matches!(*c, ' ' | '\t' | '\r' | '\n'))
-}
-
-#[cfg(not(feature = "nightly"))]
-/// Zero or more whitespace characters.
-#[inline(always)]
-#[must_use]
-pub fn whitespace<Stream: Iterator<Item = char>>() -> Parser<char, (), Stream> {
-    skip_while(|c| matches!(*c, ' ' | '\t' | '\r' | '\n'))
 }
