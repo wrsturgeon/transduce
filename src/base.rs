@@ -10,6 +10,7 @@ use crate::{bail, Parser};
 use core::fmt::Debug;
 
 #[cfg(feature = "nightly")]
+#[allow(clippy::wildcard_imports)]
 use nightly_only::*;
 #[cfg(feature = "nightly")]
 /// Imports necessary only with nightly features.
