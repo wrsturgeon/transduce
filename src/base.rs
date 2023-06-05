@@ -21,12 +21,63 @@ mod nightly_only {
     pub use core::iter::Peekable;
 }
 
+/// End-of-input error: expected an item but none remaining.
+macro_rules! end_of_input {
+    ($fnname:ident) => {
+        bail!(concat!(
+            "`",
+            stringify!($fnname),
+            "` failed: Reached end of input but expected an item"
+        ))
+    };
+}
+
+#[cfg(feature = "nightly")]
+/// Skip zero or more items while this predicate holds on them. Do not skip the first one that doesn't hold (just peek, don't consume prematurely).
+#[inline(always)]
+#[must_use]
+pub fn satisfies<Input: Clone, Predicate: Fn(&Input) -> bool>(
+    pred: Predicate,
+) -> Parser<Input, Input, impl FnOnce(&[Input]) -> result::Result<(Input, &[Input])>> {
+    Parser::new(move |slice| {
+        if let Some((head, tail)) = slice.split_first() {
+            if pred(head) {
+                Ok((head.clone(), tail))
+            } else {
+                bail!("`satisfies` failed: Predicate not satisfied")
+            }
+        } else {
+            end_of_input!(satisfies)
+        }
+    })
+}
+
+#[cfg(not(feature = "nightly"))]
+/// Skip zero or more items while this predicate holds on them. Do not skip the first one that doesn't hold (just peek, don't consume prematurely).
+#[inline(always)]
+#[must_use]
+pub fn satisfies<Input: Clone, Predicate: 'static + Fn(&Input) -> bool>(
+    pred: Predicate,
+) -> Parser<Input, Input> {
+    Parser::new(move |slice| {
+        if let Some((head, tail)) = slice.split_first() {
+            if pred(head) {
+                Ok((head.clone(), tail))
+            } else {
+                bail!("`satisfies` failed: Predicate not satisfied")
+            }
+        } else {
+            end_of_input!(satisfies)
+        }
+    })
+}
+
 parse_fn! {
     /// Match the end of a stream.
     pub fn end<I>() -> (I => ()) {
         Parser::new(move |slice| {
             if !slice.is_empty() {
-                bail!("Tried to match the end of a stream but found input remaining")
+                bail!("`end` failed: Tried to match the end of a stream but found input remaining")
             }
             Ok(((), &[]))
         })
@@ -34,13 +85,13 @@ parse_fn! {
 }
 
 parse_fn! {
-    /// Match an exact value (via `PartialEq`) and discard it.
-    pub fn exact<I: 'static + PartialEq + Debug>(expect: I) -> (I => ()) {
-        Parser::new(move |slice| match slice.split_first() {
-            None => bail!("Reached end of input while still parsing"),
+    /// Match an exact value (via `PartialEq`) and return a clone.
+    pub fn exact<I: 'static + Clone + PartialEq + Debug>(expect: I) -> (I => I) {
+        Parser::new(move |slice: &[I]| match slice.split_first() {
+            None => end_of_input!(exact),
             Some((head, tail)) => {
                 if head == &expect {
-                    Ok(((), tail))
+                    Ok((head.clone(), tail))
                 } else {
                     bail!("`exact` failed: expected `{expect:#?}` but found `{head:#?}`")
                 }
@@ -52,11 +103,60 @@ parse_fn! {
 parse_fn! {
     /// Match any single item and return it.
     pub fn verbatim<I: Clone>() -> (I => I) {
-        Parser::new(move |slice| {
-            slice
-                .split_first()
-                .map(move |(x, etc): (&I, _)| (x.clone(), etc))
-                .ok_or_else(|| "`verbatim` reached end of input while still parsing".to_owned())
+        Parser::new(move |slice: &[I]| {
+            if let Some((head, tail)) = slice.split_first() {
+                Ok((head.clone(), tail))
+            } else {
+                end_of_input!(verbatim)
+            }
+        })
+    }
+}
+
+parse_fn! {
+    /// Match a lowercase letter and return it.
+    pub fn lowercase() -> (u8 => u8) {
+        Parser::new(move |slice: &[u8]| match slice.split_first() {
+            None => end_of_input!(lowercase),
+            Some((head, tail)) => {
+                if head >= &b'a' && head <= &b'z' {
+                    Ok((head.clone(), tail))
+                } else {
+                    bail!("`lowercase` failed: expected a lowercase letter but found `{head:#?}`")
+                }
+            }
+        })
+    }
+}
+
+parse_fn! {
+    /// Match an uppercase letter and return it.
+    pub fn uppercase() -> (u8 => u8) {
+        Parser::new(move |slice: &[u8]| match slice.split_first() {
+            None => end_of_input!(lowercase),
+            Some((head, tail)) => {
+                if head >= &b'A' && head <= &b'Z' {
+                    Ok((head.clone(), tail))
+                } else {
+                    bail!("`uppercase` failed: expected an uppercase letter but found `{head:#?}`")
+                }
+            }
+        })
+    }
+}
+
+parse_fn! {
+    /// Match a single digit and return it (as an integer, not a character).
+    pub fn digit() -> (u8 => u8) {
+        Parser::new(move |slice: &[u8]| match slice.split_first() {
+            None => end_of_input!(lowercase),
+            Some((head, tail)) => {
+                if head >= &b'0' && head <= &b'9' {
+                    Ok((head - b'0', tail))
+                } else {
+                    bail!("`digit` failed: expected a digit but found `{head:#?}`")
+                }
+            }
         })
     }
 }
@@ -66,7 +166,7 @@ parse_fn! {
 #[inline(always)]
 #[must_use]
 pub fn wrapped<
-    Input: PartialEq + Debug,
+    Input: PartialEq + Clone + Debug,
     Output,
     Call: FnOnce(&[Input]) -> result::Result<(Output, &[Input])>,
 >(

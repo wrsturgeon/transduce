@@ -18,8 +18,10 @@
 //! # }
 //! ```
 
-#![cfg_attr(feature = "nightly", feature(impl_trait_in_assoc_type))]
-#![cfg_attr(feature = "nightly", feature(type_alias_impl_trait))]
+#![cfg_attr(
+    feature = "nightly",
+    feature(impl_trait_in_assoc_type, return_position_impl_trait_in_trait)
+)]
 #![deny(warnings)]
 #![warn(
     clippy::all,
@@ -324,4 +326,85 @@ impl<Input, Output, RightOutput> core::ops::BitAnd<Parser<Input, RightOutput>>
             Ok(((left, right), etc))
         })
     }
+}
+
+#[cfg(feature = "nightly")]
+impl<
+        Input,
+        Output,
+        Call: FnOnce(&[Input]) -> result::Result<(Output, &[Input])>,
+        RightCall: FnOnce(&[Input]) -> result::Result<(Output, &[Input])>,
+    > core::ops::BitOr<Parser<Input, Output, RightCall>> for Parser<Input, Output, Call>
+{
+    type Output =
+        Parser<Input, Output, impl FnOnce(&[Input]) -> result::Result<(Output, &[Input])>>;
+    #[inline(always)]
+    #[must_use]
+    fn bitor(self, rhs: Parser<Input, Output, RightCall>) -> Self::Output {
+        Parser::new(move |stream| match self.0(stream) {
+            ok @ Ok(_) => ok,
+            Err(_) => rhs.0(stream),
+        })
+    }
+}
+
+#[cfg(not(feature = "nightly"))]
+impl<Input, Output> core::ops::BitOr<Self> for Parser<Input, Output> {
+    type Output = Self;
+    #[inline(always)]
+    #[must_use]
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self::new(move |stream| match self.0(stream) {
+            ok @ Ok(_) => ok,
+            Err(_) => rhs.0(stream),
+        })
+    }
+}
+
+#[cfg(feature = "nightly")]
+impl<
+        Input,
+        Output,
+        Call: FnOnce(&[Input]) -> result::Result<(Output, &[Input])>,
+        F: FnOnce(Output) -> PostOutput,
+        PostOutput: 'static,
+    > core::ops::BitXor<F> for Parser<Input, Output, Call>
+{
+    type Output =
+        Parser<Input, PostOutput, impl FnOnce(&[Input]) -> result::Result<(PostOutput, &[Input])>>;
+    #[inline(always)]
+    #[must_use]
+    fn bitxor(self, rhs: F) -> Self::Output {
+        Parser::new(move |stream| {
+            let (parsed, etc) = self.0(stream)?;
+            Ok((rhs(parsed), etc))
+        })
+    }
+}
+
+#[cfg(not(feature = "nightly"))]
+impl<Input, Output, F: FnOnce(Output) -> PostOutput, PostOutput: 'static> core::ops::BitXor<F>
+    for Parser<Input, Output>
+{
+    type Output = Parser<Input, PostOutput>;
+    #[inline(always)]
+    #[must_use]
+    fn bitxor(self, rhs: F) -> Self::Output {
+        Parser::new(move |stream| {
+            let (parsed, etc) = self.0(stream)?;
+            Ok((rhs(parsed), etc))
+        })
+    }
+}
+
+/// Read a series of characters (actually `u8`s) into this type.
+pub trait Read: Sized {
+    #[cfg(feature = "nightly")]
+    /// Create a parser that can read `u8`s into this type.
+    #[must_use]
+    fn parser() -> Parser<u8, Self, impl FnOnce(&[u8]) -> result::Result<(Self, &[u8])>>;
+    #[cfg(not(feature = "nightly"))]
+    /// Create a parser that can read `u8`s into this type.
+    #[must_use]
+    fn parser() -> Parser<u8, Self>;
 }

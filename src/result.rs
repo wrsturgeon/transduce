@@ -12,7 +12,7 @@ pub type Result<A> = ::core::result::Result<A, String>;
 /// Immediately return with an error.
 #[macro_export]
 macro_rules! bail {
-    ($tt:tt) => {
+    ($tt:expr) => {
         return ::core::result::Result::Err(::std::format!($tt))
     };
 }
