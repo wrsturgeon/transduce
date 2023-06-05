@@ -3,15 +3,23 @@
 
 See this example from `lib.rs`:
 ```rust
-let parser = exact('(') >> anything() << exact(')');
-let rawstr = "(*)";
-assert_eq!(parser.parse(rawstr.chars()), Ok('*'));
+let parser = exact('(') >> verbatim() << exact(')') << end();
+let input = "(*)";
+assert_eq!(
+    parser.parse(input.chars()),
+    Ok('*'),
+);
+// Or, equivalently:
+assert_eq!(
+    parenthesized(verbatim()).parse(input.chars()),
+    Ok('*'),
+);
 ```
 This does exactly what it looks like it does.
 
 Equivalently,
 ```rust
-assert_eq!(parenthesized(anything()).parse(rawstr.chars()), Ok('*'))
+assert_eq!(parenthesized(verbatim()).parse(rawstr.chars()), Ok('*'))
 ```
 
 Huge shoutout to UPenn's CIS 194 and Haskell's higher-order parsing libraries I learned in 194.

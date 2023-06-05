@@ -20,6 +20,18 @@ mod nightly_only {
 }
 
 parse_fn! {
+    /// Match the end of a stream.
+    pub fn end<I>() -> (I => ()) {
+        Parser::new(move |stream| {
+            if stream.next().is_some() {
+                bail!("Tried to match the end of a stream but found input remaining")
+            }
+            Ok(())
+        })
+    }
+}
+
+parse_fn! {
     /// Match an exact value (via `PartialEq`) and discard it.
     pub fn exact<I: 'static + PartialEq + Debug>(expect: I) -> (I => ()) {
         Parser::new(move |stream| match stream.next() {
@@ -37,9 +49,38 @@ parse_fn! {
 
 parse_fn! {
     /// Match any single item and return it.
-    pub fn anything<I>() -> (I => I) {
-        Parser::new(|stream| stream.next().ok_or_else(|| "Reached end of input while still parsing".to_owned()))
+    pub fn verbatim<I>() -> (I => I) {
+        Parser::new(move |stream| stream.next().ok_or_else(|| "Reached end of input while still parsing".to_owned()))
     }
+}
+
+#[cfg(feature = "nightly")]
+/// Match an expression in parentheses.
+#[inline(always)]
+#[must_use]
+pub fn wrapped<
+    Input: 'static + PartialEq + Debug,
+    Output,
+    Stream: Iterator<Item = Input>,
+    Call: FnOnce(&mut Peekable<Stream>) -> result::Result<Output>,
+>(
+    before: Input,
+    p: Parser<Input, Output, Stream, Call>,
+    after: Input,
+) -> Parser<Input, Output, Stream, impl FnOnce(&mut Peekable<Stream>) -> result::Result<Output>> {
+    exact(before) >> p << exact(after)
+}
+
+#[cfg(not(feature = "nightly"))]
+/// Match an expression in parentheses.
+#[inline(always)]
+#[must_use]
+pub fn wrapped<Input: 'static + PartialEq + Debug, Output, Stream: Iterator<Item = Input>>(
+    before: Input,
+    p: Parser<Input, Output, Stream>,
+    after: Input,
+) -> Parser<Input, Output, Stream> {
+    exact(before) >> p << exact(after)
 }
 
 #[cfg(feature = "nightly")]
