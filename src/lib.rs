@@ -9,18 +9,12 @@
 //! Want to parse something in parentheses? Surround it in parentheses:
 //! ```rust
 //! use transduce::base::*;
-//! # fn main() {
-//! let parser = exact('(') >> verbatim() << exact(')') << end();
-//! let input = "(*)";
+//! # fn main() -> transduce::result::Result<()> {
 //! assert_eq!(
-//!     parser.parse(input.chars()),
-//!     Ok('*'),
+//!     (exact(b'(') >> verbatim() << exact(b')') << end()).parse(b"(*)")?,
+//!     b'*',
 //! );
-//! // Or, equivalently:
-//! assert_eq!(
-//!     parenthesized(verbatim()).parse(input.chars()),
-//!     Ok('*'),
-//! );
+//! # Ok(())
 //! # }
 //! ```
 
@@ -61,9 +55,9 @@ macro_rules! parse_fn {
         #[inline(always)]
         #[must_use]
         $(#[$meta])*
-        $($pub)? fn $name<Stream: ::core::iter::Iterator<Item = $Input>, $($($gen$(: $($lt +)? $bound $(+ $bounds)*)?),*)?>(
+        $($pub)? fn $name$(<$($gen$(: $($lt +)? $bound $(+ $bounds)*)?),*>)?(
             $($arg: $arg_t),*
-        ) -> $crate::Parser<$Input, $Output, Stream, impl ::core::ops::FnOnce(&mut ::core::iter::Peekable<Stream>) -> $crate::result::Result<$Output>> $body
+        ) -> $crate::Parser<$Input, $Output, impl ::core::ops::FnOnce(&[$Input]) -> $crate::result::Result<($Output, &[$Input])>> $body
     };
 }
 
@@ -79,143 +73,151 @@ macro_rules! parse_fn {
         #[inline(always)]
         #[must_use]
         $(#[$meta])*
-        $($pub)? fn $name<Stream: ::core::iter::Iterator<Item = $Input>, $($($gen$(: $($lt +)? $bound $(+ $bounds)*)?),*)?>(
+        $($pub)? fn $name$(<$($gen$(: $($lt +)? $bound $(+ $bounds)*)?),*>)?(
             $($arg: $arg_t),*
-        ) -> $crate::Parser<$Input, $Output, Stream> $body
+        ) -> $crate::Parser<$Input, $Output> $body
     };
 }
 
 pub mod base;
 pub mod result;
 
-use ::core::{iter::Peekable, marker::PhantomData};
+#[cfg(test)]
+mod test;
 
+#[cfg(feature = "nightly")]
 /// Parser wrapping a unique templated function type.
 pub struct Parser<
-    Input,
+    Input: 'static,
     Output: 'static,
-    Stream: 'static + Iterator<Item = Input>,
-    #[cfg(feature = "nightly")] Call: FnOnce(&mut Peekable<Stream>) -> result::Result<Output>,
+    Call: FnOnce(&[Input]) -> result::Result<(Output, &[Input])>,
 >(
-    #[cfg(feature = "nightly")] Call,
-    #[cfg(not(feature = "nightly"))]
+    Call,
+    ::core::marker::PhantomData<Input>,
+    ::core::marker::PhantomData<Output>,
+);
+
+#[cfg(not(feature = "nightly"))]
+/// Parser wrapping a unique templated function type.
+pub struct Parser<Input: 'static, Output: 'static>(
     #[allow(clippy::type_complexity)]
-    Box<dyn FnOnce(&mut Peekable<Stream>) -> result::Result<Output>>,
-    PhantomData<Input>,
-    PhantomData<Output>,
-    PhantomData<Stream>,
+    Box<dyn FnOnce(&[Input]) -> result::Result<(Output, &[Input])>>,
+    ::core::marker::PhantomData<Input>,
+    ::core::marker::PhantomData<Output>,
 );
 
 #[cfg(feature = "nightly")]
 impl<
-        Input,
+        Input: 'static,
         Output: 'static,
-        Stream: 'static + Iterator<Item = Input>,
-        Call: FnOnce(&mut Peekable<Stream>) -> result::Result<Output>,
-    > Parser<Input, Output, Stream, Call>
+        Call: FnOnce(&[Input]) -> result::Result<(Output, &[Input])>,
+    > Parser<Input, Output, Call>
 {
     /// Construct a parser from a function with the correct signature.
     #[inline(always)]
     #[must_use]
     pub const fn new(f: Call) -> Self {
-        Self(f, PhantomData, PhantomData, PhantomData)
+        Self(f, ::core::marker::PhantomData, ::core::marker::PhantomData)
     }
     /// Parse a list of items (usually characters, in which case this "list of characters" is effectively a string).
     /// # Errors
     /// If parsing fails, if we run out of input, or if we have leftover input afterward.
     #[inline(always)]
-    pub fn parse(self, stream: Stream) -> result::Result<Output> {
-        let mut iter = stream.peekable();
-        let parsed = self.0(&mut iter)?;
-        iter.next()
-            .map_or(Ok(parsed), |_| bail!("Leftover input after parsing"))
+    pub fn parse(self, slice: &[Input]) -> result::Result<Output>
+    where
+        Input: ::core::fmt::Debug,
+    {
+        let (parsed, etc) = self.0(slice)?;
+        if etc.is_empty() {
+            Ok(parsed)
+        } else {
+            Err(format!(
+                "Unparsed input remains after parsing what should have been everything: {:?}",
+                &slice.get((slice.len().saturating_sub(etc.len()))..)
+            ))
+        }
     }
     /// Construct a new parser that performs an operation and discards its result then performs a second one and returns its result.
     #[inline(always)]
     #[must_use]
     pub fn discard_left<
         RightOutput,
-        RightCall: FnOnce(&mut Peekable<Stream>) -> result::Result<RightOutput>,
+        RightCall: FnOnce(&[Input]) -> result::Result<(RightOutput, &[Input])>,
     >(
         self,
-        right: Parser<Input, RightOutput, Stream, RightCall>,
-    ) -> Parser<
-        Input,
-        RightOutput,
-        Stream,
-        impl FnOnce(&mut Peekable<Stream>) -> result::Result<RightOutput>,
-    > {
+        right: Parser<Input, RightOutput, RightCall>,
+    ) -> Parser<Input, RightOutput, impl FnOnce(&[Input]) -> result::Result<(RightOutput, &[Input])>>
+    {
         #![allow(clippy::question_mark_used)]
-        Parser::new(move |stream| {
-            self.0(stream)?;
-            right.0(stream)
-        })
+        Parser::new(move |stream| right.0(self.0(stream)?.1))
     }
     /// Construct a new parser that performs an operation and saves its result then performs a second one and discards its result, returning the first.
     #[inline(always)]
     #[must_use]
     pub fn discard_right<
         RightOutput,
-        RightCall: FnOnce(&mut Peekable<Stream>) -> result::Result<RightOutput>,
+        RightCall: FnOnce(&[Input]) -> result::Result<(RightOutput, &[Input])>,
     >(
         self,
-        right: Parser<Input, RightOutput, Stream, RightCall>,
-    ) -> Parser<Input, Output, Stream, impl FnOnce(&mut Peekable<Stream>) -> result::Result<Output>>
-    {
+        right: Parser<Input, RightOutput, RightCall>,
+    ) -> Parser<Input, Output, impl FnOnce(&[Input]) -> result::Result<(Output, &[Input])>> {
         #![allow(clippy::question_mark_used)]
         Parser::new(move |stream| {
-            let result = self.0(stream)?;
-            right.0(stream)?;
-            Ok(result)
+            let (result, etc) = self.0(stream)?;
+            Ok((result, right.0(etc)?.1))
         })
     }
 }
 
 #[cfg(not(feature = "nightly"))]
-impl<Input, Output: 'static, Stream: 'static + Iterator<Item = Input>>
-    Parser<Input, Output, Stream>
-{
+impl<Input, Output> Parser<Input, Output> {
     /// Construct a parser from a function with the correct signature.
     #[inline(always)]
     #[must_use]
-    pub fn new<F: 'static + FnOnce(&mut Peekable<Stream>) -> result::Result<Output>>(f: F) -> Self {
-        Self(Box::new(f), PhantomData, PhantomData, PhantomData)
+    pub fn new<F: 'static + FnOnce(&[Input]) -> result::Result<(Output, &[Input])>>(f: F) -> Self {
+        Self(
+            Box::new(f),
+            ::core::marker::PhantomData,
+            ::core::marker::PhantomData,
+        )
     }
     /// Parse a list of items (usually characters, in which case this "list of characters" is effectively a string).
     /// # Errors
     /// If parsing fails, if we run out of input, or if we have leftover input afterward.
     #[inline(always)]
-    pub fn parse(self, stream: Stream) -> result::Result<Output> {
-        let mut iter = stream.peekable();
-        let parsed = self.0(&mut iter)?;
-        iter.next()
-            .map_or(Ok(parsed), |_| bail!("Leftover input after parsing"))
+    pub fn parse(self, slice: &[Input]) -> result::Result<Output>
+    where
+        Input: ::core::fmt::Debug,
+    {
+        let (parsed, etc) = self.0(slice)?;
+        if etc.is_empty() {
+            Ok(parsed)
+        } else {
+            Err(format!(
+                "Unparsed input remains after parsing what should have been everything: {:?}",
+                &slice.get((slice.len().saturating_sub(etc.len()))..)
+            ))
+        }
     }
     /// Construct a new parser that performs an operation and discards its result then performs a second one and returns its result.
     #[inline(always)]
     #[must_use]
-    pub fn discard_left<RightOutput: 'static>(
+    pub fn discard_left<RightOutput>(
         self,
-        right: Parser<Input, RightOutput, Stream>,
-    ) -> Parser<Input, RightOutput, Stream> {
+        right: Parser<Input, RightOutput>,
+    ) -> Parser<Input, RightOutput> {
         #![allow(clippy::question_mark_used)]
-        Parser::new(move |stream| {
-            self.0(stream)?;
-            right.0(stream)
-        })
+        Parser::new(move |stream| right.0(self.0(stream)?.1))
     }
     /// Construct a new parser that performs an operation and saves its result then performs a second one and discards its result, returning the first.
     #[inline(always)]
     #[must_use]
-    pub fn discard_right<RightOutput: 'static>(
-        self,
-        right: Parser<Input, RightOutput, Stream>,
-    ) -> Self {
+    pub fn discard_right<RightOutput>(self, right: Parser<Input, RightOutput>) -> Self {
         #![allow(clippy::question_mark_used)]
         Self::new(move |stream| {
-            let result = self.0(stream)?;
-            right.0(stream)?;
-            Ok(result)
+            let (result, first_etc) = self.0(stream)?;
+            let etc = right.0(first_etc)?.1;
+            Ok((result, etc))
         })
     }
 }
@@ -224,34 +226,31 @@ impl<Input, Output: 'static, Stream: 'static + Iterator<Item = Input>>
 impl<
         Input,
         Output,
-        Stream: Iterator<Item = Input>,
-        Call: FnOnce(&mut Peekable<Stream>) -> result::Result<Output>,
+        Call: FnOnce(&[Input]) -> result::Result<(Output, &[Input])>,
         RightOutput,
-        RightCall: FnOnce(&mut Peekable<Stream>) -> result::Result<RightOutput>,
-    > core::ops::Shr<Parser<Input, RightOutput, Stream, RightCall>>
-    for Parser<Input, Output, Stream, Call>
+        RightCall: FnOnce(&[Input]) -> result::Result<(RightOutput, &[Input])>,
+    > core::ops::Shr<Parser<Input, RightOutput, RightCall>> for Parser<Input, Output, Call>
 {
     type Output = Parser<
         Input,
         RightOutput,
-        Stream,
-        impl FnOnce(&mut Peekable<Stream>) -> result::Result<RightOutput>,
+        impl FnOnce(&[Input]) -> result::Result<(RightOutput, &[Input])>,
     >;
     #[inline(always)]
     #[must_use]
-    fn shr(self, rhs: Parser<Input, RightOutput, Stream, RightCall>) -> Self::Output {
+    fn shr(self, rhs: Parser<Input, RightOutput, RightCall>) -> Self::Output {
         self.discard_left(rhs)
     }
 }
 
 #[cfg(not(feature = "nightly"))]
-impl<Input, Output, Stream: Iterator<Item = Input>, RightOutput>
-    core::ops::Shr<Parser<Input, RightOutput, Stream>> for Parser<Input, Output, Stream>
+impl<Input, Output, RightOutput> core::ops::Shr<Parser<Input, RightOutput>>
+    for Parser<Input, Output>
 {
-    type Output = Parser<Input, RightOutput, Stream>;
+    type Output = Parser<Input, RightOutput>;
     #[inline(always)]
     #[must_use]
-    fn shr(self, rhs: Parser<Input, RightOutput, Stream>) -> Self::Output {
+    fn shr(self, rhs: Parser<Input, RightOutput>) -> Self::Output {
         self.discard_left(rhs)
     }
 }
@@ -260,30 +259,69 @@ impl<Input, Output, Stream: Iterator<Item = Input>, RightOutput>
 impl<
         Input,
         Output,
-        Stream: Iterator<Item = Input>,
-        Call: FnOnce(&mut Peekable<Stream>) -> result::Result<Output>,
+        Call: FnOnce(&[Input]) -> result::Result<(Output, &[Input])>,
         RightOutput,
-        RightCall: FnOnce(&mut Peekable<Stream>) -> result::Result<RightOutput>,
-    > core::ops::Shl<Parser<Input, RightOutput, Stream, RightCall>>
-    for Parser<Input, Output, Stream, Call>
+        RightCall: FnOnce(&[Input]) -> result::Result<(RightOutput, &[Input])>,
+    > core::ops::Shl<Parser<Input, RightOutput, RightCall>> for Parser<Input, Output, Call>
 {
     type Output =
-        Parser<Input, Output, Stream, impl FnOnce(&mut Peekable<Stream>) -> result::Result<Output>>;
+        Parser<Input, Output, impl FnOnce(&[Input]) -> result::Result<(Output, &[Input])>>;
     #[inline(always)]
     #[must_use]
-    fn shl(self, rhs: Parser<Input, RightOutput, Stream, RightCall>) -> Self::Output {
+    fn shl(self, rhs: Parser<Input, RightOutput, RightCall>) -> Self::Output {
         self.discard_right(rhs)
     }
 }
 
 #[cfg(not(feature = "nightly"))]
-impl<Input, Output, Stream: Iterator<Item = Input>, RightOutput>
-    core::ops::Shl<Parser<Input, RightOutput, Stream>> for Parser<Input, Output, Stream>
+impl<Input, Output, RightOutput> core::ops::Shl<Parser<Input, RightOutput>>
+    for Parser<Input, Output>
 {
     type Output = Self;
     #[inline(always)]
     #[must_use]
-    fn shl(self, rhs: Parser<Input, RightOutput, Stream>) -> Self::Output {
+    fn shl(self, rhs: Parser<Input, RightOutput>) -> Self::Output {
         self.discard_right(rhs)
+    }
+}
+
+#[cfg(feature = "nightly")]
+impl<
+        Input,
+        Output,
+        Call: FnOnce(&[Input]) -> result::Result<(Output, &[Input])>,
+        RightOutput,
+        RightCall: FnOnce(&[Input]) -> result::Result<(RightOutput, &[Input])>,
+    > core::ops::BitAnd<Parser<Input, RightOutput, RightCall>> for Parser<Input, Output, Call>
+{
+    type Output = Parser<
+        Input,
+        (Output, RightOutput),
+        impl FnOnce(&[Input]) -> result::Result<((Output, RightOutput), &[Input])>,
+    >;
+    #[inline(always)]
+    #[must_use]
+    fn bitand(self, rhs: Parser<Input, RightOutput, RightCall>) -> Self::Output {
+        Parser::new(move |stream| {
+            let (left, first_etc) = self.0(stream)?;
+            let (right, etc) = rhs.0(first_etc)?;
+            Ok(((left, right), etc))
+        })
+    }
+}
+
+#[cfg(not(feature = "nightly"))]
+impl<Input, Output, RightOutput> core::ops::BitAnd<Parser<Input, RightOutput>>
+    for Parser<Input, Output>
+{
+    type Output = Parser<Input, (Output, RightOutput)>;
+    #[inline(always)]
+    #[must_use]
+    fn bitand(self, rhs: Parser<Input, RightOutput>) -> Self::Output {
+        Parser::new(move |stream| {
+            let (left, first_etc) = self.0(stream)?;
+            let (right, etc) = rhs.0(first_etc)?;
+            Ok(((left, right), etc))
+        })
     }
 }
