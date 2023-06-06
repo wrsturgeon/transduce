@@ -119,8 +119,8 @@ parse_fn! {
         Parser::new(move |slice: &[u8]| match slice.split_first() {
             None => end_of_input!(lowercase),
             Some((head, tail)) => {
-                if head >= &b'a' && head <= &b'z' {
-                    Ok((head.clone(), tail))
+                if head.is_ascii_lowercase() {
+                    Ok((*head, tail))
                 } else {
                     bail!("`lowercase` failed: expected a lowercase letter but found `{head:#?}`")
                 }
@@ -135,8 +135,8 @@ parse_fn! {
         Parser::new(move |slice: &[u8]| match slice.split_first() {
             None => end_of_input!(lowercase),
             Some((head, tail)) => {
-                if head >= &b'A' && head <= &b'Z' {
-                    Ok((head.clone(), tail))
+                if head.is_ascii_uppercase() {
+                    Ok((*head, tail))
                 } else {
                     bail!("`uppercase` failed: expected an uppercase letter but found `{head:#?}`")
                 }
@@ -148,10 +148,11 @@ parse_fn! {
 parse_fn! {
     /// Match a single digit and return it (as an integer, not a character).
     pub fn digit() -> (u8 => u8) {
+        #[allow(clippy::integer_arithmetic)]
         Parser::new(move |slice: &[u8]| match slice.split_first() {
             None => end_of_input!(lowercase),
             Some((head, tail)) => {
-                if head >= &b'0' && head <= &b'9' {
+                if head.is_ascii_digit() {
                     Ok((head - b'0', tail))
                 } else {
                     bail!("`digit` failed: expected a digit but found `{head:#?}`")
