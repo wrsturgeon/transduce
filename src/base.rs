@@ -148,12 +148,11 @@ parse_fn! {
 parse_fn! {
     /// Match a single digit and return it (as an integer, not a character).
     pub fn digit() -> (u8 => u8) {
-        #[allow(clippy::integer_arithmetic)]
         Parser::new(move |slice: &[u8]| match slice.split_first() {
             None => end_of_input!(lowercase),
             Some((head, tail)) => {
                 if head.is_ascii_digit() {
-                    Ok((head - b'0', tail))
+                    Ok((head.checked_sub(b'0').ok_or_else(|| "Internal error: `digit` received an out-of-range character".to_owned())?, tail))
                 } else {
                     bail!("`digit` failed: expected a digit but found `{head:#?}`")
                 }
