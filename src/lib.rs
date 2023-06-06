@@ -383,8 +383,8 @@ impl<
 }
 
 #[cfg(not(feature = "nightly"))]
-impl<Input, Output, F: FnOnce(Output) -> PostOutput, PostOutput: 'static> core::ops::BitXor<F>
-    for Parser<Input, Output>
+impl<Input, Output, F: 'static + FnOnce(Output) -> PostOutput, PostOutput: 'static>
+    core::ops::BitXor<F> for Parser<Input, Output>
 {
     type Output = Parser<Input, PostOutput>;
     #[inline(always)]

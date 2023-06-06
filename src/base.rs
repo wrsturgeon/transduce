@@ -181,7 +181,7 @@ pub fn wrapped<
 /// Parse an expression between two (discarded) items.
 #[inline(always)]
 #[must_use]
-pub fn wrapped<Input: 'static + PartialEq + Debug, Output>(
+pub fn wrapped<Input: 'static + PartialEq + Clone + Debug, Output>(
     before: Input,
     p: Parser<Input, Output>,
     after: Input,
