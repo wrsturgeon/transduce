@@ -9,7 +9,7 @@
 //! Want to parse something in parentheses? Surround it in parentheses:
 //! ```rust
 //! use transduce::base::*;
-//! # fn main() -> transduce::result::Result<()> {
+//! # fn main() -> Result<(), String> {
 //! assert_eq!(
 //!     (exact(b'(') >> verbatim() << exact(b')') << end()).parse(b"(*)")?,
 //!     b'*',
@@ -82,13 +82,14 @@ macro_rules! parse_fn {
 }
 
 pub mod base;
+pub mod print_error;
 pub mod result;
 
 #[cfg(test)]
 mod test;
 
 #[cfg(feature = "nightly")]
-/// Parser wrapping a unique templated function type.
+/// Parser wrapping a unique templated callable type.
 pub struct Parser<
     Input: 'static,
     Output: 'static,
@@ -100,7 +101,7 @@ pub struct Parser<
 );
 
 #[cfg(not(feature = "nightly"))]
-/// Parser wrapping a unique templated function type.
+/// Parser wrapping a boxed callable type.
 pub struct Parser<Input: 'static, Output: 'static>(
     #[allow(clippy::type_complexity)]
     Box<dyn FnOnce(&[Input]) -> result::Result<(Output, &[Input])>>,
@@ -121,24 +122,59 @@ impl<
     pub const fn new(f: Call) -> Self {
         Self(f, ::core::marker::PhantomData, ::core::marker::PhantomData)
     }
+
     /// Parse a list of items (usually characters, in which case this "list of characters" is effectively a string).
     /// # Errors
     /// If parsing fails, if we run out of input, or if we have leftover input afterward.
     #[inline(always)]
-    pub fn parse(self, slice: &[Input]) -> result::Result<Output>
+    pub fn parse(self, slice: &[Input]) -> ::core::result::Result<Output, String>
     where
-        Input: ::core::fmt::Debug,
+        Input: print_error::PrintError,
     {
-        let (parsed, etc) = self.0(slice)?;
+        let (parsed, etc) = match self.0(slice) {
+            Ok(ok) => ok,
+            Err(err) => {
+                return Err(Input::pretty_error(
+                    err.message,
+                    slice,
+                    if let Some(i) = err.etc {
+                        match i.checked_add(1).map(|ii| slice.len().checked_sub(ii)) {
+                            Some(Some(s)) => Some(s),
+                            _ => return Err("Internal parsing error: `parse` received an `etc` greater than the slice itself".to_owned()),
+                        }
+                    } else {
+                        None
+                    },
+                ))
+            }
+        };
         if etc.is_empty() {
             Ok(parsed)
         } else {
-            Err(format!(
-                "Unparsed input remains after parsing what should have been everything: {:?}",
-                &slice.get((slice.len().saturating_sub(etc.len()))..)
+            Err(Input::pretty_error(
+                "Unparsed input remains after parsing what should have been everything".to_owned(),
+                slice,
+                match slice.len().checked_sub(etc.len()){
+                    some @ Some(_) => some,
+                    None => return Err("Internal parsing error: `parse` received an `etc` greater than the slice itself".to_owned()),
+                },
             ))
         }
     }
+
+    /// Parse a list of items (usually characters, in which case this "list of characters" is effectively a string).
+    /// # Panics
+    /// If parsing fails, if we run out of input, or if we have leftover input afterward.
+    #[inline(always)]
+    #[must_use]
+    pub fn parse_or_panic(self, slice: &[Input]) -> Output
+    where
+        Input: print_error::PrintError,
+    {
+        #![allow(clippy::panic)]
+        self.parse(slice).unwrap_or_else(|err| panic!("{}", err))
+    }
+
     /// Construct a new parser that performs an operation and discards its result then performs a second one and returns its result.
     #[inline(always)]
     #[must_use]
@@ -153,6 +189,7 @@ impl<
         #![allow(clippy::question_mark_used)]
         Parser::new(move |stream| right.0(self.0(stream)?.1))
     }
+
     /// Construct a new parser that performs an operation and saves its result then performs a second one and discards its result, returning the first.
     #[inline(always)]
     #[must_use]
@@ -183,24 +220,59 @@ impl<Input, Output> Parser<Input, Output> {
             ::core::marker::PhantomData,
         )
     }
+
     /// Parse a list of items (usually characters, in which case this "list of characters" is effectively a string).
     /// # Errors
     /// If parsing fails, if we run out of input, or if we have leftover input afterward.
     #[inline(always)]
-    pub fn parse(self, slice: &[Input]) -> result::Result<Output>
+    pub fn parse(self, slice: &[Input]) -> ::core::result::Result<Output, String>
     where
-        Input: ::core::fmt::Debug,
+        Input: print_error::PrintError,
     {
-        let (parsed, etc) = self.0(slice)?;
+        let (parsed, etc) = match self.0(slice) {
+            Ok(ok) => ok,
+            Err(err) => {
+                return Err(Input::pretty_error(
+                    err.message,
+                    slice,
+                    if let Some(i) = err.etc {
+                        match i.checked_add(1).map(|ii| slice.len().checked_sub(ii)) {
+                            Some(Some(s)) => Some(s),
+                            _ => return Err("Internal parsing error: `parse` received an `etc` greater than the slice itself".to_owned()),
+                        }
+                    } else {
+                        None
+                    },
+                ))
+            }
+        };
         if etc.is_empty() {
             Ok(parsed)
         } else {
-            Err(format!(
-                "Unparsed input remains after parsing what should have been everything: {:?}",
-                &slice.get((slice.len().saturating_sub(etc.len()))..)
+            Err(Input::pretty_error(
+                "Unparsed input remains after parsing what should have been everything".to_owned(),
+                slice,
+                match slice.len().checked_sub(etc.len()){
+                    some @ Some(_) => some,
+                    None => return Err("Internal parsing error: `parse` received an `etc` greater than the slice itself".to_owned()),
+                },
             ))
         }
     }
+
+    /// Parse a list of items (usually characters, in which case this "list of characters" is effectively a string).
+    /// # Panics
+    /// If parsing fails, if we run out of input, or if we have leftover input afterward.
+    #[inline(always)]
+    #[must_use]
+    pub fn parse_or_panic(self, slice: &[Input]) -> Output
+    where
+        Input: print_error::PrintError,
+    {
+        #![allow(clippy::panic)]
+        self.parse(slice).unwrap_or_else(|err| panic!("{}", err))
+    }
+
     /// Construct a new parser that performs an operation and discards its result then performs a second one and returns its result.
     #[inline(always)]
     #[must_use]
@@ -211,6 +283,7 @@ impl<Input, Output> Parser<Input, Output> {
         #![allow(clippy::question_mark_used)]
         Parser::new(move |stream| right.0(self.0(stream)?.1))
     }
+
     /// Construct a new parser that performs an operation and saves its result then performs a second one and discards its result, returning the first.
     #[inline(always)]
     #[must_use]

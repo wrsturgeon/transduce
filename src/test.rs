@@ -85,3 +85,57 @@ fn literals() {
         ])
     );
 }
+
+#[test]
+fn optional_zero() {
+    let parser = || optional(exact(b'0')) >> exact(b'1') & exact(b'2') & exact(b'3');
+    assert_eq!(parser().parse(b"123"), Ok(((b'1', b'2'), b'3')));
+    assert_eq!(parser().parse(b"0123"), Ok(((b'1', b'2'), b'3')));
+    assert!(matches!(parser().parse(b"00123"), Err(_)));
+}
+
+#[should_panic] // Remove to see the gorgeous error message
+#[test]
+fn fail() {
+    let _ = (verbatim() << exact(b'!')).parse_or_panic(b"???");
+}
+
+#[should_panic] // Remove to see the gorgeous error message
+#[test]
+fn not_everything() {
+    let _ = (exact(b'?') >> exact(b'?')).parse_or_panic(b"???");
+}
+
+#[should_panic] // Remove to see the gorgeous error message
+#[test]
+fn oob() {
+    let _ = (verbatim() & verbatim() & verbatim() & verbatim()).parse_or_panic(b"???");
+}
+
+#[should_panic] // Remove to see the gorgeous error message
+#[test]
+fn not_expecting_a_newline() {
+    let _ = (verbatim() << exact(b'!')).parse_or_panic(b"?\n?\n?");
+}
+
+#[should_panic] // Remove to see the gorgeous error message
+#[test]
+fn multiline_fail() {
+    let _ = (verbatim() << whitespace() << exact(b'!')).parse_or_panic(b"?\n?\n?");
+}
+
+#[should_panic] // Remove to see the gorgeous error message
+#[test]
+fn multiline_not_everything() {
+    let _ = (exact(b'?') << whitespace() >> exact(b'?')).parse_or_panic(b"?\n?\n?");
+}
+
+#[should_panic] // Remove to see the gorgeous error message
+#[test]
+fn multiline_oob() {
+    let _ = (verbatim() << whitespace()
+        & verbatim() << whitespace()
+        & verbatim() << whitespace()
+        & verbatim())
+    .parse_or_panic(b"?\n?\n?");
+}

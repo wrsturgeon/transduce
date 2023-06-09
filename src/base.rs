@@ -8,7 +8,7 @@
 
 #![allow(unreachable_code)] // TODO: REMOVE
 
-use crate::{bail, Parser};
+use crate::{bail, result::ParseError, Parser};
 use core::fmt::Debug;
 
 #[cfg(feature = "nightly")]
@@ -23,12 +23,11 @@ mod nightly_only {
 
 /// End-of-input error: expected an item but none remaining.
 macro_rules! end_of_input {
-    ($fnname:ident) => {
-        bail!(concat!(
-            "`",
-            stringify!($fnname),
-            "` failed: Reached end of input but expected an item"
-        ))
+    () => {
+        return ::core::result::Result::Err(ParseError {
+            message: "Reached end of input but expected an item".to_owned(),
+            etc: None,
+        })
     };
 }
 
@@ -44,10 +43,10 @@ pub fn satisfies<Input: Clone, Predicate: Fn(&Input) -> bool>(
             if pred(head) {
                 Ok((head.clone(), tail))
             } else {
-                bail!("`satisfies` failed: Predicate not satisfied")
+                bail!("Predicate not satisfied", tail)
             }
         } else {
-            end_of_input!(satisfies)
+            end_of_input!()
         }
     })
 }
@@ -64,10 +63,10 @@ pub fn satisfies<Input: Clone, Predicate: 'static + Fn(&Input) -> bool>(
             if pred(head) {
                 Ok((head.clone(), tail))
             } else {
-                bail!("`satisfies` failed: Predicate not satisfied")
+                bail!("Predicate not satisfied", tail)
             }
         } else {
-            end_of_input!(satisfies)
+            end_of_input!()
         }
     })
 }
@@ -77,7 +76,7 @@ parse_fn! {
     pub fn end<I>() -> (I => ()) {
         Parser::new(move |slice| {
             if !slice.is_empty() {
-                bail!("`end` failed: Tried to match the end of a stream but found input remaining")
+                bail!("Tried to match the end of a stream but found input remaining", slice)
             }
             Ok(((), &[]))
         })
@@ -88,12 +87,12 @@ parse_fn! {
     /// Match an exact value (via `PartialEq`) and return a clone.
     pub fn exact<I: 'static + Clone + PartialEq + Debug>(expect: I) -> (I => I) {
         Parser::new(move |slice: &[I]| match slice.split_first() {
-            None => end_of_input!(exact),
+            None => end_of_input!(),
             Some((head, tail)) => {
                 if head == &expect {
                     Ok((head.clone(), tail))
                 } else {
-                    bail!("`exact` failed: expected `{expect:#?}` but found `{head:#?}`")
+                    bail!("Expected {expect:#?} but found {head:#?}", tail)
                 }
             }
         })
@@ -107,7 +106,7 @@ parse_fn! {
             if let Some((head, tail)) = slice.split_first() {
                 Ok((head.clone(), tail))
             } else {
-                end_of_input!(verbatim)
+                end_of_input!()
             }
         })
     }
@@ -117,12 +116,13 @@ parse_fn! {
     /// Match a lowercase letter and return it.
     pub fn lowercase() -> (u8 => u8) {
         Parser::new(move |slice: &[u8]| match slice.split_first() {
-            None => end_of_input!(lowercase),
+            None => end_of_input!(),
             Some((head, tail)) => {
                 if head.is_ascii_lowercase() {
                     Ok((*head, tail))
                 } else {
-                    bail!("`lowercase` failed: expected a lowercase letter but found `{head:#?}`")
+                    let c: char = (*head).into();
+                    bail!("Expected a lowercase letter but found '{c:#?}'", tail)
                 }
             }
         })
@@ -133,12 +133,13 @@ parse_fn! {
     /// Match an uppercase letter and return it.
     pub fn uppercase() -> (u8 => u8) {
         Parser::new(move |slice: &[u8]| match slice.split_first() {
-            None => end_of_input!(lowercase),
+            None => end_of_input!(),
             Some((head, tail)) => {
                 if head.is_ascii_uppercase() {
                     Ok((*head, tail))
                 } else {
-                    bail!("`uppercase` failed: expected an uppercase letter but found `{head:#?}`")
+                    let c: char = (*head).into();
+                    bail!("Expected an uppercase letter but found '{c:#?}'", tail)
                 }
             }
         })
@@ -149,16 +150,41 @@ parse_fn! {
     /// Match a single digit and return it (as an integer, not a character).
     pub fn digit() -> (u8 => u8) {
         Parser::new(move |slice: &[u8]| match slice.split_first() {
-            None => end_of_input!(lowercase),
+            None => end_of_input!(),
             Some((head, tail)) => {
                 if head.is_ascii_digit() {
-                    Ok((head.checked_sub(b'0').ok_or_else(|| "Internal error: `digit` received an out-of-range character".to_owned())?, tail))
+                    Ok((head.checked_sub(b'0').ok_or_else(|| ParseError { message: "Internal error: `digit` received an out-of-range character".to_owned(), etc: Some(tail.len()) })?, tail))
                 } else {
-                    bail!("`digit` failed: expected a digit but found `{head:#?}`")
+                    let c: char = (*head).into();
+                    bail!("Expected a digit but found '{c:#?}'", tail)
                 }
             }
         })
     }
+}
+
+#[cfg(feature = "nightly")]
+/// If you can match, return it; if not, stay in the same place.
+#[inline(always)]
+#[must_use]
+pub fn optional<Output, Call: FnOnce(&[u8]) -> result::Result<(Output, &[u8])>>(
+    p: Parser<u8, Output, Call>,
+) -> Parser<u8, Option<Output>, impl FnOnce(&[u8]) -> result::Result<(Option<Output>, &[u8])>> {
+    Parser::new(move |stream| match p.0(stream) {
+        Ok((parsed, etc)) => Ok((Some(parsed), etc)),
+        Err(_) => Ok((None, stream)),
+    })
+}
+
+#[cfg(not(feature = "nightly"))]
+/// If you can match, return it; if not, stay in the same place.
+#[inline(always)]
+#[must_use]
+pub fn optional<Output>(p: Parser<u8, Output>) -> Parser<u8, Option<Output>> {
+    Parser::new(move |stream| match p.0(stream) {
+        Ok((parsed, etc)) => Ok((Some(parsed), etc)),
+        Err(_) => Ok((None, stream)),
+    })
 }
 
 #[cfg(feature = "nightly")]
