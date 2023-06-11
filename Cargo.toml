@@ -7,8 +7,8 @@ description = "Isomorphic parsing: your code should look like what it parses."
 license = "MPL-2.0"
 repository = "https://github.com/wrsturgeon/transduce"
 readme = "README.md"
-keywords = ["types", "proofs", "math", "logic", "metaprogramming"]
-categories = ["mathematics", "encoding", "no-std", "compilers", "data-structures"]
+keywords = ["parsing", "parser", "types", "logic", "metaprogramming"]
+categories = ["parsing", "mathematics", "encoding", "compilers", "data-structures"]
 build = "build.rs"
 
 [dependencies]
