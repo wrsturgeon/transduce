@@ -124,8 +124,9 @@ impl<
     }
 
     /// Parse exactly one item of input; don't continue without further instruction.
+    /// # Errors
+    /// When parsing fails.
     #[inline(always)]
-    #[must_use]
     pub fn once(self, slice: &[Input]) -> result::Result<(Output, &[Input])> {
         self.0(slice)
     }
@@ -229,8 +230,9 @@ impl<Input, Output> Parser<Input, Output> {
     }
 
     /// Parse exactly one item of input; don't continue without further instruction.
+    /// # Errors
+    /// When parsing fails.
     #[inline(always)]
-    #[must_use]
     pub fn once(self, slice: &[Input]) -> result::Result<(Output, &[Input])> {
         self.0(slice)
     }

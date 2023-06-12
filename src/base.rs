@@ -202,10 +202,9 @@ pub fn any_seq<'a, I: 'static + Clone + PartialEq + Debug>(
                 return ok;
             }
         }
-        if let Some((_, tail)) = slice.split_first() {
-            bail!("Expected one of {expect:#?}", tail)
-        } else {
-            end_of_input!()
+        match slice.split_first() {
+            Some((_, tail)) => bail!("Expected one of {expect:#?}", tail),
+            None => end_of_input!(),
         }
     })
 }
@@ -223,10 +222,9 @@ pub fn any_seq<'a, I: 'static + Clone + PartialEq + Debug>(
                 return ok;
             }
         }
-        if let Some((_, tail)) = slice.split_first() {
-            bail!("Expected one of {expect:#?}", tail)
-        } else {
-            end_of_input!()
+        match slice.split_first() {
+            Some((_, tail)) => bail!("Expected one of {expect:#?}", tail),
+            None => end_of_input!(),
         }
     })
 }
@@ -322,10 +320,7 @@ parse_fn! {
     /// Match a `lowerCamelCase` term.
     pub fn lower_camel_case() -> (u8 => Vec<u8>) {
         Parser::new(move |slice| {
-            let (first, mut etc) = match slice.split_first() {
-                Some(ok) => ok,
-                None => end_of_input!()
-            };
+            let Some((first, mut etc)) = slice.split_first() else { end_of_input!() };
             if lowercase().once(slice).is_err() {
                 bail!("Expected `lowerCamelCase`", etc);
             }
@@ -348,10 +343,7 @@ parse_fn! {
     /// Match an `UpperCamelCase` term.
     pub fn upper_camel_case() -> (u8 => Vec<u8>) {
         Parser::new(move |slice| {
-            let (first, mut etc) = match slice.split_first() {
-                Some(ok) => ok,
-                None => end_of_input!()
-            };
+            let Some((first, mut etc)) = slice.split_first() else { end_of_input!() };
             if uppercase().once(slice).is_err() {
                 bail!("Expected `UpperCamelCase`", etc);
             }
@@ -391,10 +383,7 @@ parse_fn! {
     /// Match a base-ten unsigned integer.
     pub fn unsigned_integer() -> (u8 => usize) {
         Parser::new(move |slice| {
-            let (_, mut etc) = match slice.split_first() {
-                Some(ok) => ok,
-                None => end_of_input!(),
-            };
+            let Some((_, mut etc)) = slice.split_first() else { end_of_input!() };
             let mut r = match digit().once(slice) {
                 Ok((i, _)) => usize::from(i),
                 Err(_) => bail!("Expected `UpperCamelCase`", etc),
@@ -424,7 +413,15 @@ parse_fn! {
             let Ok(val) = isize::try_from(abs) else {
                 bail!("Overflow: value is too big to fit into a Rust `isize`", etc);
             };
-            Ok((if neg.is_some() { -val } else { val }, etc))
+            let signed = if neg.is_some() {
+                match val.checked_neg() {
+                    Some(ok) => ok,
+                    None => bail!("Used this integer's most negative value, whose positive can't be represented", etc),
+                }
+            } else {
+                val
+            };
+            Ok((signed, etc))
         })
     }
 }
@@ -719,12 +716,14 @@ pub fn comma_separated<Output: 'static, Lazy: 'static + Fn() -> Parser<u8, Outpu
 
 /// Operator-precedence parsing, e.g. for infix math.
 pub mod precedence {
+    #[allow(clippy::wildcard_imports)]
     use super::*;
 
     #[cfg(feature = "nightly")]
     /// Parse binary operations without grouping them by precedence into a tree: just return a list of operators and things to the right of them.
     #[inline(always)]
     #[must_use]
+    #[allow(clippy::type_complexity)]
     pub fn binops<
         'a,
         Output: 'static,
@@ -751,6 +750,7 @@ pub mod precedence {
     /// Parse binary operations without grouping them by precedence into a tree: just return a list of operators and things to the right of them.
     #[inline(always)]
     #[must_use]
+    #[allow(clippy::type_complexity)]
     pub fn binops<'a, Output: 'static, Lazy: 'static + Fn() -> Parser<u8, Output>>(
         primary: Lazy,
         operators: &'a [&'a [u8]],
