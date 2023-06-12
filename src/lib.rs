@@ -123,6 +123,13 @@ impl<
         Self(f, ::core::marker::PhantomData, ::core::marker::PhantomData)
     }
 
+    /// Parse exactly one item of input; don't continue without further instruction.
+    #[inline(always)]
+    #[must_use]
+    pub fn once(self, slice: &[Input]) -> result::Result<(Output, &[Input])> {
+        self.0(slice)
+    }
+
     /// Parse a list of items (usually characters, in which case this "list of characters" is effectively a string).
     /// # Errors
     /// If parsing fails, if we run out of input, or if we have leftover input afterward.
@@ -131,7 +138,7 @@ impl<
     where
         Input: print_error::PrintError,
     {
-        let (parsed, etc) = match self.0(slice) {
+        let (parsed, etc) = match self.once(slice) {
             Ok(ok) => ok,
             Err(err) => {
                 return Err(Input::pretty_error(
@@ -187,7 +194,7 @@ impl<
     ) -> Parser<Input, RightOutput, impl FnOnce(&[Input]) -> result::Result<(RightOutput, &[Input])>>
     {
         #![allow(clippy::question_mark_used)]
-        Parser::new(move |stream| right.0(self.0(stream)?.1))
+        Parser::new(move |stream| right.once(self.once(stream)?.1))
     }
 
     /// Construct a new parser that performs an operation and saves its result then performs a second one and discards its result, returning the first.
@@ -202,8 +209,8 @@ impl<
     ) -> Parser<Input, Output, impl FnOnce(&[Input]) -> result::Result<(Output, &[Input])>> {
         #![allow(clippy::question_mark_used)]
         Parser::new(move |stream| {
-            let (result, etc) = self.0(stream)?;
-            Ok((result, right.0(etc)?.1))
+            let (result, etc) = self.once(stream)?;
+            Ok((result, right.once(etc)?.1))
         })
     }
 }
@@ -221,6 +228,13 @@ impl<Input, Output> Parser<Input, Output> {
         )
     }
 
+    /// Parse exactly one item of input; don't continue without further instruction.
+    #[inline(always)]
+    #[must_use]
+    pub fn once(self, slice: &[Input]) -> result::Result<(Output, &[Input])> {
+        self.0(slice)
+    }
+
     /// Parse a list of items (usually characters, in which case this "list of characters" is effectively a string).
     /// # Errors
     /// If parsing fails, if we run out of input, or if we have leftover input afterward.
@@ -229,7 +243,7 @@ impl<Input, Output> Parser<Input, Output> {
     where
         Input: print_error::PrintError,
     {
-        let (parsed, etc) = match self.0(slice) {
+        let (parsed, etc) = match self.once(slice) {
             Ok(ok) => ok,
             Err(err) => {
                 return Err(Input::pretty_error(
@@ -281,7 +295,7 @@ impl<Input, Output> Parser<Input, Output> {
         right: Parser<Input, RightOutput>,
     ) -> Parser<Input, RightOutput> {
         #![allow(clippy::question_mark_used)]
-        Parser::new(move |stream| right.0(self.0(stream)?.1))
+        Parser::new(move |stream| right.once(self.once(stream)?.1))
     }
 
     /// Construct a new parser that performs an operation and saves its result then performs a second one and discards its result, returning the first.
@@ -290,8 +304,8 @@ impl<Input, Output> Parser<Input, Output> {
     pub fn discard_right<RightOutput>(self, right: Parser<Input, RightOutput>) -> Self {
         #![allow(clippy::question_mark_used)]
         Self::new(move |stream| {
-            let (result, first_etc) = self.0(stream)?;
-            let etc = right.0(first_etc)?.1;
+            let (result, first_etc) = self.once(stream)?;
+            let etc = right.once(first_etc)?.1;
             Ok((result, etc))
         })
     }
@@ -378,8 +392,8 @@ impl<
     #[must_use]
     fn bitand(self, rhs: Parser<Input, RightOutput, RightCall>) -> Self::Output {
         Parser::new(move |stream| {
-            let (left, first_etc) = self.0(stream)?;
-            let (right, etc) = rhs.0(first_etc)?;
+            let (left, first_etc) = self.once(stream)?;
+            let (right, etc) = rhs.once(first_etc)?;
             Ok(((left, right), etc))
         })
     }
@@ -394,8 +408,8 @@ impl<Input, Output, RightOutput> core::ops::BitAnd<Parser<Input, RightOutput>>
     #[must_use]
     fn bitand(self, rhs: Parser<Input, RightOutput>) -> Self::Output {
         Parser::new(move |stream| {
-            let (left, first_etc) = self.0(stream)?;
-            let (right, etc) = rhs.0(first_etc)?;
+            let (left, first_etc) = self.once(stream)?;
+            let (right, etc) = rhs.once(first_etc)?;
             Ok(((left, right), etc))
         })
     }
@@ -407,29 +421,32 @@ impl<
         Output,
         Call: FnOnce(&[Input]) -> result::Result<(Output, &[Input])>,
         RightCall: FnOnce(&[Input]) -> result::Result<(Output, &[Input])>,
-    > core::ops::BitOr<Parser<Input, Output, RightCall>> for Parser<Input, Output, Call>
+        Lazy: FnOnce() -> Parser<Input, Output, RightCall>,
+    > core::ops::BitOr<Lazy> for Parser<Input, Output, Call>
 {
     type Output =
         Parser<Input, Output, impl FnOnce(&[Input]) -> result::Result<(Output, &[Input])>>;
     #[inline(always)]
     #[must_use]
-    fn bitor(self, rhs: Parser<Input, Output, RightCall>) -> Self::Output {
-        Parser::new(move |stream| match self.0(stream) {
+    fn bitor(self, rhs: Lazy) -> Self::Output {
+        Parser::new(move |stream| match self.once(stream) {
             ok @ Ok(_) => ok,
-            Err(_) => rhs.0(stream),
+            Err(_) => rhs().once(stream),
         })
     }
 }
 
 #[cfg(not(feature = "nightly"))]
-impl<Input, Output> core::ops::BitOr<Self> for Parser<Input, Output> {
+impl<Input, Output, Lazy: 'static + FnOnce() -> Self> core::ops::BitOr<Lazy>
+    for Parser<Input, Output>
+{
     type Output = Self;
     #[inline(always)]
     #[must_use]
-    fn bitor(self, rhs: Self) -> Self::Output {
-        Self::new(move |stream| match self.0(stream) {
+    fn bitor(self, rhs: Lazy) -> Self::Output {
+        Self::new(move |stream| match self.once(stream) {
             ok @ Ok(_) => ok,
-            Err(_) => rhs.0(stream),
+            Err(_) => rhs().once(stream),
         })
     }
 }
@@ -449,7 +466,7 @@ impl<
     #[must_use]
     fn bitxor(self, rhs: F) -> Self::Output {
         Parser::new(move |stream| {
-            let (parsed, etc) = self.0(stream)?;
+            let (parsed, etc) = self.once(stream)?;
             Ok((rhs(parsed), etc))
         })
     }
@@ -464,7 +481,7 @@ impl<Input, Output, F: 'static + FnOnce(Output) -> PostOutput, PostOutput: 'stat
     #[must_use]
     fn bitxor(self, rhs: F) -> Self::Output {
         Parser::new(move |stream| {
-            let (parsed, etc) = self.0(stream)?;
+            let (parsed, etc) = self.once(stream)?;
             Ok((rhs(parsed), etc))
         })
     }
@@ -476,6 +493,7 @@ pub trait Read: Sized {
     /// Create a parser that can read `u8`s into this type.
     #[must_use]
     fn parser() -> Parser<u8, Self, impl FnOnce(&[u8]) -> result::Result<(Self, &[u8])>>;
+
     #[cfg(not(feature = "nightly"))]
     /// Create a parser that can read `u8`s into this type.
     #[must_use]

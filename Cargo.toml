@@ -14,5 +14,9 @@ build = "build.rs"
 [dependencies]
 rsmonad = ">=0.2"
 
+[dev-dependencies]
+proptest = "*"
+quickcheck = "*"
+
 [features]
 nightly = []

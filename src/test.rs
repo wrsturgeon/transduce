@@ -42,15 +42,15 @@ impl Read for Literal {
     #[must_use]
     fn parser(
     ) -> crate::Parser<u8, Self, impl FnOnce(&[u8]) -> crate::result::Result<(Self, &[u8])>> {
-        exact(b'\'') >> (lowercase() | uppercase()) << exact(b'\'') ^ Literal::Character
-            | digit() ^ Literal::Digit
+        exact(b'\'') >> (lowercase() | uppercase) << exact(b'\'') ^ Literal::Character
+            | || digit() ^ Literal::Digit
     }
     #[cfg(not(feature = "nightly"))]
     #[inline(always)]
     #[must_use]
     fn parser() -> crate::Parser<u8, Self> {
-        exact(b'\'') >> (lowercase() | uppercase()) << exact(b'\'') ^ Literal::Character
-            | digit() ^ Literal::Digit
+        exact(b'\'') >> (lowercase() | uppercase) << exact(b'\'') ^ Literal::Character
+            | || digit() ^ Literal::Digit
     }
 }
 
@@ -88,7 +88,7 @@ fn literals() {
 
 #[test]
 fn optional_zero() {
-    let parser = || optional(exact(b'0')) >> exact(b'1') & exact(b'2') & exact(b'3');
+    let parser = || optional(|| exact(b'0')) >> exact(b'1') & exact(b'2') & exact(b'3');
     assert_eq!(parser().parse(b"123"), Ok(((b'1', b'2'), b'3')));
     assert_eq!(parser().parse(b"0123"), Ok(((b'1', b'2'), b'3')));
     assert!(matches!(parser().parse(b"00123"), Err(_)));
@@ -138,4 +138,35 @@ fn multiline_oob() {
         & verbatim() << whitespace()
         & verbatim())
     .parse_or_panic(b"?\n?\n?");
+}
+
+#[test]
+fn binops_without_precedence() {
+    assert_eq!(
+        precedence::binops(lowercase, &[b"+", b"-", b"*", b"/"])
+            .once(b"a + b - c * d / e")
+            .map(|(a, _)| a),
+        Ok((
+            b'a',
+            vec![(&b"+"[..], b'b'), (b"-", b'c'), (b"*", b'd'), (b"/", b'e')]
+        ))
+    );
+}
+
+proptest::proptest! {
+    #[test]
+    fn prop_unsigned_int(i in usize::MIN..=usize::MAX) {
+        assert_eq!(
+            unsigned_integer().parse(format!("{i:}").as_bytes()),
+            Ok(i),
+        );
+    }
+
+    #[test]
+    fn prop_signed_int(i in isize::MIN..=isize::MAX) {
+        assert_eq!(
+            signed_integer().parse(format!("{i:}").as_bytes()),
+            Ok(i),
+        );
+    }
 }
