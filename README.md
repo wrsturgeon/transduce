@@ -1,18 +1,18 @@
-# `transduce`: Isomorphic Parsing
+# `transduce`: Zero-Copy Isomorphic Parsing
 ## Your code should look like what it parses.
 
 See this example from `lib.rs`:
 ```rust
-let parser = exact('(') >> verbatim() << exact(')') << end();
-let input = "(*)";
+let parser = exact(&b'(') >> verbatim() << exact(&b')') << end();
+let input = b"(*)";
 assert_eq!(
-    parser.parse(input.chars()),
-    Ok('*'),
+    parser.parse(input),
+    Ok(&b'*'), // Reference to the region of input inside parentheses
 );
 // Or, equivalently:
 assert_eq!(
-    parenthesized(verbatim()).parse(input.chars()),
-    Ok('*'),
+    parenthesized(verbatim).parse(input),
+    Ok(&b'*'),
 );
 ```
 This does exactly what it looks like it does.

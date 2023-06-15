@@ -35,13 +35,19 @@ macro_rules! end_of_input {
 /// Skip zero or more items while this predicate holds on them. Do not skip the first one that doesn't hold (just peek, don't consume prematurely).
 #[inline(always)]
 #[must_use]
-pub fn satisfies<Input: Clone, Predicate: FnOnce(&Input) -> bool>(
+pub fn satisfies<'input, 'f, Input, Predicate: 'f + FnOnce(&'input Input) -> bool>(
     pred: Predicate,
-) -> Parser<Input, Input, impl FnOnce(&[Input]) -> result::Result<(Input, &[Input])>> {
-    Parser::new(move |slice| {
+) -> Parser<
+    'input,
+    'f,
+    Input,
+    &'input Input,
+    impl 'f + FnOnce(&'input [Input]) -> result::Result<(&'input Input, &'input [Input])>,
+> {
+    Parser::new(|slice| {
         if let Some((head, tail)) = slice.split_first() {
             if pred(head) {
-                Ok((head.clone(), tail))
+                Ok((head, tail))
             } else {
                 bail!("Predicate not satisfied", tail)
             }
@@ -55,13 +61,13 @@ pub fn satisfies<Input: Clone, Predicate: FnOnce(&Input) -> bool>(
 /// Skip zero or more items while this predicate holds on them. Do not skip the first one that doesn't hold (just peek, don't consume prematurely).
 #[inline(always)]
 #[must_use]
-pub fn satisfies<Input: Clone, Predicate: 'static + FnOnce(&Input) -> bool>(
+pub fn satisfies<'input, 'f, Input, Predicate: 'f + FnOnce(&'input Input) -> bool>(
     pred: Predicate,
-) -> Parser<Input, Input> {
-    Parser::new(move |slice| {
+) -> Parser<'input, 'f, Input, &'input Input> {
+    Parser::new(|slice| {
         if let Some((head, tail)) = slice.split_first() {
             if pred(head) {
-                Ok((head.clone(), tail))
+                Ok((head, tail))
             } else {
                 bail!("Predicate not satisfied", tail)
             }
@@ -74,7 +80,7 @@ pub fn satisfies<Input: Clone, Predicate: 'static + FnOnce(&Input) -> bool>(
 parse_fn! {
     /// Match the end of a stream.
     pub fn end<I>() -> (I => ()) {
-        Parser::new(move |slice| {
+        Parser::new(|slice| {
             if !slice.is_empty() {
                 bail!("Tried to match the end of a stream but found input remaining", slice)
             }
@@ -85,12 +91,12 @@ parse_fn! {
 
 parse_fn! {
     /// Match an exact value (via `PartialEq`) and return a clone.
-    pub fn exact<I: 'static + Clone + PartialEq + Debug>(expect: I) -> (I => I) {
-        Parser::new(move |slice: &[I]| match slice.split_first() {
+    pub fn exact<I: PartialEq + Debug>(expect: &'f I) -> (I => &'input I) {
+        Parser::new(move |slice| match slice.split_first() {
             None => end_of_input!(),
             Some((head, tail)) => {
-                if head == &expect {
-                    Ok((head.clone(), tail))
+                if head == expect {
+                    Ok((head, tail))
                 } else {
                     bail!("Expected {expect:#?} but found {head:#?}", tail)
                 }
@@ -99,142 +105,73 @@ parse_fn! {
     }
 }
 
-#[cfg(feature = "nightly")]
-/// Match an exact sequence of items (via `PartialEq`) and return a reference to the original, not the parsed input.
-#[inline(always)]
-#[must_use]
-pub fn exact_seq<'a, I: 'static + Clone + PartialEq + Debug>(
-    expect: &'a [I],
-) -> Parser<I, &'a [I], impl FnOnce(&[I]) -> result::Result<(&'a [I], &[I])>> {
-    Parser::new(move |slice: &[I]| {
-        let mut etc = slice;
-        for i in expect {
-            match etc.split_first() {
-                None => end_of_input!(),
-                Some((head, tail)) => {
-                    if head != i {
-                        bail!(
-                            "Expected {expect:#?} but found {head:#?} instead of {i:#?}",
-                            tail
-                        )
+parse_fn! {
+    /// Match an exact sequence of items (via `PartialEq`) and return a reference to the original, not the parsed input.
+    pub fn exact_seq<I: PartialEq + Debug>(expect: &'f [I]) -> (I => &'f [I]) {
+        Parser::new(move |slice| {
+            let mut etc = slice;
+            for i in expect {
+                match etc.split_first() {
+                    None => end_of_input!(),
+                    Some((head, tail)) => {
+                        if head != i {
+                            bail!(
+                                "Expected {expect:#?} but found {head:#?} instead of {i:#?}",
+                                tail
+                            )
+                        }
+                        etc = tail;
                     }
-                    etc = tail;
                 }
             }
-        }
-        Ok((expect, etc))
-    })
+            Ok((expect, etc))
+        })
+    }
 }
 
-#[cfg(not(feature = "nightly"))]
-/// Match an exact sequence of items (via `PartialEq`) and return a reference to the original, not the parsed input.
-#[inline(always)]
-#[must_use]
-pub fn exact_seq<I: 'static + Clone + PartialEq + Debug>(expect: &[I]) -> Parser<I, &[I]> {
-    Parser::new(move |slice: &[I]| {
-        let mut etc = slice;
-        for i in expect {
-            match etc.split_first() {
+parse_fn! {
+    /// Match any of a set of options. Set represented as a binary tree for efficiency.
+    pub fn any<I: Debug + Ord>(expect: &'f ::alloc::collections::BTreeSet<I>) -> (I => &'f I) {
+        Parser::new(move |slice| match slice.split_first() {
+            None => end_of_input!(),
+            Some((head, tail)) => {
+                if let Some(in_set) = expect.get(head) {
+                    Ok((in_set, tail))
+                } else {
+                    bail!(
+                        "Expected an element of {expect:#?} but found {head:#?}",
+                        tail
+                    )
+                }
+            }
+        })
+    }
+}
+
+parse_fn! {
+    /// Match any of a set of options. Set represented as a binary tree for efficiency.
+    pub fn any_seq<I: Debug + Ord>(expect: &'f ::alloc::collections::BTreeSet<&'input [I]>) -> (I => &'input [I]) {
+        Parser::new(move |slice| {
+            let Some((head, _)) = slice.split_first() else { end_of_input!() };
+            for option in expect.range(core::slice::from_ref(head)..=slice) {
+                if let ok @ Ok(_) = exact_seq(option).once(slice) {
+                    return ok;
+                }
+            }
+            match slice.split_first() {
+                Some((_, tail)) => bail!("Expected one of {expect:#?}", tail),
                 None => end_of_input!(),
-                Some((head, tail)) => {
-                    if head != i {
-                        bail!(
-                            "Expected {expect:#?} but found {head:#?} instead of {i:#?}",
-                            tail
-                        )
-                    }
-                    etc = tail;
-                }
             }
-        }
-        Ok((expect, etc))
-    })
-}
-
-#[cfg(feature = "nightly")]
-/// Match any of these potential items.
-#[inline(always)]
-#[must_use]
-pub fn any<'a, I: 'static + Clone + PartialEq + Debug>(
-    expect: &'a [I],
-) -> Parser<I, &'a I, impl FnOnce(&[I]) -> result::Result<(&'a I, &[I])>> {
-    Parser::new(move |slice| match slice.split_first() {
-        None => end_of_input!(),
-        Some((head, tail)) => {
-            for option in expect {
-                if head == option {
-                    return Ok((option, tail));
-                }
-            }
-            bail!("Expected one of {expect:#?} but found {head:#?}", tail)
-        }
-    })
-}
-
-#[cfg(not(feature = "nightly"))]
-/// Match any of these potential items.
-#[inline(always)]
-#[must_use]
-pub fn any<I: 'static + Clone + PartialEq + Debug>(expect: &[I]) -> Parser<I, &I> {
-    Parser::new(move |slice| match slice.split_first() {
-        None => end_of_input!(),
-        Some((head, tail)) => {
-            for option in expect {
-                if head == option {
-                    return Ok((option, tail));
-                }
-            }
-            bail!("Expected one of {expect:#?} but found {head:#?}", tail)
-        }
-    })
-}
-
-#[cfg(feature = "nightly")]
-/// Match any of these potential sequences of items and return a reference to the original, not the parsed input.
-#[inline(always)]
-#[must_use]
-pub fn any_seq<'a, I: 'static + Clone + PartialEq + Debug>(
-    expect: &'a [&'a [I]],
-) -> Parser<I, &'a [I], impl FnOnce(&[I]) -> result::Result<(&'a [I], &[I])>> {
-    Parser::new(move |slice| {
-        for option in expect {
-            if let ok @ Ok(_) = exact_seq(option).once(slice) {
-                return ok;
-            }
-        }
-        match slice.split_first() {
-            Some((_, tail)) => bail!("Expected one of {expect:#?}", tail),
-            None => end_of_input!(),
-        }
-    })
-}
-
-#[cfg(not(feature = "nightly"))]
-/// Match any of these potential sequences of items and return a reference to the original, not the parsed input.
-#[inline(always)]
-#[must_use]
-pub fn any_seq<'a, I: 'static + Clone + PartialEq + Debug>(
-    expect: &'a [&'a [I]],
-) -> Parser<I, &'a [I]> {
-    Parser::new(move |slice| {
-        for option in expect {
-            if let ok @ Ok(_) = exact_seq(option).once(slice) {
-                return ok;
-            }
-        }
-        match slice.split_first() {
-            Some((_, tail)) => bail!("Expected one of {expect:#?}", tail),
-            None => end_of_input!(),
-        }
-    })
+        })
+    }
 }
 
 parse_fn! {
     /// Match any single item and return it.
-    pub fn verbatim<I: Clone>() -> (I => I) {
-        Parser::new(move |slice: &[I]| {
+    pub fn verbatim<I>() -> (I => &'input I) {
+        Parser::new(|slice: &[I]| {
             if let Some((head, tail)) = slice.split_first() {
-                Ok((head.clone(), tail))
+                Ok((head, tail))
             } else {
                 end_of_input!()
             }
@@ -244,12 +181,12 @@ parse_fn! {
 
 parse_fn! {
     /// Match a lowercase letter and return it.
-    pub fn lowercase() -> (u8 => u8) {
-        Parser::new(move |slice: &[u8]| match slice.split_first() {
+    pub fn lowercase() -> (u8 => &'input u8) {
+        Parser::new(|slice: &[u8]| match slice.split_first() {
             None => end_of_input!(),
             Some((head, tail)) => {
                 if head.is_ascii_lowercase() {
-                    Ok((*head, tail))
+                    Ok((head, tail))
                 } else {
                     let c: char = (*head).into();
                     bail!("Expected a lowercase letter but found '{c:#?}'", tail)
@@ -261,12 +198,12 @@ parse_fn! {
 
 parse_fn! {
     /// Match an uppercase letter and return it.
-    pub fn uppercase() -> (u8 => u8) {
-        Parser::new(move |slice: &[u8]| match slice.split_first() {
+    pub fn uppercase() -> (u8 => &'input u8) {
+        Parser::new(|slice: &[u8]| match slice.split_first() {
             None => end_of_input!(),
             Some((head, tail)) => {
                 if head.is_ascii_uppercase() {
-                    Ok((*head, tail))
+                    Ok((head, tail))
                 } else {
                     let c: char = (*head).into();
                     bail!("Expected an uppercase letter but found '{c:#?}'", tail)
@@ -279,12 +216,12 @@ parse_fn! {
 parse_fn! {
     /// Match a `snake_case` term.
     pub fn snake_case() -> (u8 => Vec<u8>) {
-        Parser::new(move |slice| {
+        Parser::new(|slice| {
             let mut r = vec![];
             let mut etc = slice;
             loop {
-                if let Ok((head, tail)) = (lowercase() | ||exact(b'_')).once(etc) {
-                    r.push(head);
+                if let Ok((head, tail)) = (lowercase() | || exact(&b'_')).once(etc) {
+                    r.push(*head);
                     etc = tail;
                 } else if whitespace().once(etc).is_ok() {
                     return Ok((r, etc))
@@ -299,12 +236,12 @@ parse_fn! {
 parse_fn! {
     /// Match a `SCREAMING_CASE` term.
     pub fn screaming_case() -> (u8 => Vec<u8>) {
-        Parser::new(move |slice| {
+        Parser::new(|slice| {
             let mut r = vec![];
             let mut etc = slice;
             loop {
-                if let Ok((head, tail)) = (uppercase() | ||exact(b'_')).once(etc) {
-                    r.push(head);
+                if let Ok((head, tail)) = (uppercase() | || exact(&b'_')).once(etc) {
+                    r.push(*head);
                     etc = tail;
                 } else if whitespace().once(etc).is_ok() {
                     return Ok((r, etc))
@@ -319,7 +256,7 @@ parse_fn! {
 parse_fn! {
     /// Match a `lowerCamelCase` term.
     pub fn lower_camel_case() -> (u8 => Vec<u8>) {
-        Parser::new(move |slice| {
+        Parser::new(|slice| {
             let Some((first, mut etc)) = slice.split_first() else { end_of_input!() };
             if lowercase().once(slice).is_err() {
                 bail!("Expected `lowerCamelCase`", etc);
@@ -327,7 +264,7 @@ parse_fn! {
             let mut r = vec![*first];
             loop {
                 if let Ok((head, tail)) = (lowercase() | uppercase).once(etc) {
-                    r.push(head);
+                    r.push(*head);
                     etc = tail;
                 } else if whitespace().once(etc).is_ok() {
                     return Ok((r, etc))
@@ -342,7 +279,7 @@ parse_fn! {
 parse_fn! {
     /// Match an `UpperCamelCase` term.
     pub fn upper_camel_case() -> (u8 => Vec<u8>) {
-        Parser::new(move |slice| {
+        Parser::new(|slice| {
             let Some((first, mut etc)) = slice.split_first() else { end_of_input!() };
             if uppercase().once(slice).is_err() {
                 bail!("Expected `UpperCamelCase`", etc);
@@ -350,7 +287,7 @@ parse_fn! {
             let mut r = vec![*first];
             loop {
                 if let Ok((head, tail)) = (lowercase() | uppercase).once(etc) {
-                    r.push(head);
+                    r.push(*head);
                     etc = tail;
                 } else if whitespace().once(etc).is_ok() {
                     return Ok((r, etc))
@@ -365,7 +302,7 @@ parse_fn! {
 parse_fn! {
     /// Match a single digit and return it (as an integer, not a character).
     pub fn digit() -> (u8 => u8) {
-        Parser::new(move |slice: &[u8]| match slice.split_first() {
+        Parser::new(|slice: &[u8]| match slice.split_first() {
             None => end_of_input!(),
             Some((head, tail)) => {
                 if head.is_ascii_digit() {
@@ -382,7 +319,7 @@ parse_fn! {
 parse_fn! {
     /// Match a base-ten unsigned integer.
     pub fn unsigned_integer() -> (u8 => usize) {
-        Parser::new(move |slice| {
+        Parser::new(|slice| {
             let Some((_, mut etc)) = slice.split_first() else { end_of_input!() };
             let mut r = match digit().once(slice) {
                 Ok((i, _)) => usize::from(i),
@@ -408,8 +345,8 @@ parse_fn! {
 parse_fn! {
     /// Match a base-ten signed integer.
     pub fn signed_integer() -> (u8 => isize) {
-        Parser::new(move |slice| {
-            let ((neg, abs), etc) = (optional(|| exact(b'-')) & unsigned_integer()).once(slice)?;
+        Parser::new(|slice| {
+            let ((neg, abs), etc) = (optional(|| exact(&b'-')) & unsigned_integer()).once(slice)?;
             let Ok(val) = isize::try_from(abs) else {
                 bail!("Overflow: value is too big to fit into a Rust `isize`", etc);
             };
@@ -431,13 +368,21 @@ parse_fn! {
 #[inline(always)]
 #[must_use]
 pub fn optional<
+    'input,
+    'f,
     Output,
-    Call: FnOnce(&[u8]) -> result::Result<(Output, &[u8])>,
-    Lazy: FnOnce() -> Parser<u8, Output, Call>,
+    Call: 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+    Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output, Call>,
 >(
     p: Lazy,
-) -> Parser<u8, Option<Output>, impl FnOnce(&[u8]) -> result::Result<(Option<Output>, &[u8])>> {
-    Parser::new(move |stream| match p().once(stream) {
+) -> Parser<
+    'input,
+    'f,
+    u8,
+    Option<Output>,
+    impl FnOnce(&'input [u8]) -> result::Result<(Option<Output>, &'input [u8])>,
+> {
+    Parser::new(|stream| match p().once(stream) {
         Ok((parsed, etc)) => Ok((Some(parsed), etc)),
         Err(_) => Ok((None, stream)),
     })
@@ -447,146 +392,225 @@ pub fn optional<
 /// If you can match, return it; if not, stay in the same place.
 #[inline(always)]
 #[must_use]
-pub fn optional<Output, Lazy: 'static + FnOnce() -> Parser<u8, Output>>(
+pub fn optional<'input, 'f, Output: 'f, Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output>>(
     p: Lazy,
-) -> Parser<u8, Option<Output>> {
-    Parser::new(move |stream| match p().once(stream) {
+) -> Parser<'input, 'f, u8, Option<Output>> {
+    Parser::new(|stream| match p().once(stream) {
         Ok((parsed, etc)) => Ok((Some(parsed), etc)),
         Err(_) => Ok((None, stream)),
     })
 }
 
+// FIXME: investigate https://github.com/rust-lang/rust/blob/master/tests/ui/generic-associated-types/issue-88595.stderr
+/*
 #[cfg(feature = "nightly")]
 /// Parse an expression between two (discarded) items.
 #[inline(always)]
 #[must_use]
 pub fn wrapped<
-    Input: PartialEq + Clone + Debug,
-    Output,
-    Call: FnOnce(&[Input]) -> result::Result<(Output, &[Input])>,
-    Lazy: FnOnce() -> Parser<Input, Output, Call>,
+    'input,
+    'f,
+    Input: PartialEq + Debug,
+    Output: 'f,
+    Call: 'f + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
+    Lazy: 'f + FnOnce() -> Parser<'input, 'f, Input, Output, Call>,
 >(
-    before: Input,
+    before: &'f Input,
     p: Lazy,
-    after: Input,
-) -> Parser<Input, Output, impl FnOnce(&[Input]) -> result::Result<(Output, &[Input])>> {
+    after: &'f Input,
+) -> Parser<
+    'input,
+    'f,
+    Input,
+    Output,
+    impl 'f + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
+> {
     exact(before) >> p() << exact(after)
 }
+*/
 
 #[cfg(not(feature = "nightly"))]
 /// Parse an expression between two (discarded) items.
 #[inline(always)]
 #[must_use]
 pub fn wrapped<
-    Input: 'static + PartialEq + Clone + Debug,
-    Output,
-    Lazy: FnOnce() -> Parser<Input, Output>,
+    'input,
+    'f,
+    Input: PartialEq + Debug,
+    Output: 'f,
+    Lazy: 'f + FnOnce() -> Parser<'input, 'f, Input, Output>,
 >(
-    before: Input,
+    before: &'f Input,
     p: Lazy,
-    after: Input,
-) -> Parser<Input, Output> {
+    after: &'f Input,
+) -> Parser<'input, 'f, Input, Output> {
     exact(before) >> p() << exact(after)
 }
 
+// FIXME
+/*
 #[cfg(feature = "nightly")]
 /// Parse an expression in parentheses: `(...)`.
 #[inline(always)]
 #[must_use]
 pub fn parenthesized<
+    'input,
+    'f,
     Output,
-    Call: FnOnce(&[u8]) -> result::Result<(Output, &[u8])>,
-    Lazy: FnOnce() -> Parser<u8, Output, Call>,
+    Call: 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+    Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output, Call>,
 >(
     p: Lazy,
-) -> Parser<u8, Output, impl FnOnce(&[u8]) -> result::Result<(Output, &[u8])>> {
-    wrapped(b'(', p, b')')
+) -> Parser<
+    'input,
+    'f,
+    u8,
+    Output,
+    impl 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+> {
+    wrapped(&b'(', p, &b')')
 }
+*/
 
 #[cfg(not(feature = "nightly"))]
 /// Parse an expression in parentheses: `(...)`.
 #[inline(always)]
 #[must_use]
-pub fn parenthesized<Output, Lazy: FnOnce() -> Parser<u8, Output>>(p: Lazy) -> Parser<u8, Output> {
-    wrapped(b'(', p, b')')
+pub fn parenthesized<
+    'input,
+    'f,
+    Output: 'f,
+    Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output>,
+>(
+    p: Lazy,
+) -> Parser<'input, 'f, u8, Output> {
+    wrapped(&b'(', p, &b')')
 }
 
+// FIXME
+/*
 #[cfg(feature = "nightly")]
 /// Parse an expression in brackets: `[...]`.
 #[inline(always)]
 #[must_use]
 pub fn bracketed<
+    'input,
+    'f,
     Output,
-    Call: FnOnce(&[u8]) -> result::Result<(Output, &[u8])>,
-    Lazy: FnOnce() -> Parser<u8, Output, Call>,
+    Call: 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+    Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output, Call>,
 >(
     p: Lazy,
-) -> Parser<u8, Output, impl FnOnce(&[u8]) -> result::Result<(Output, &[u8])>> {
-    wrapped(b'[', p, b']')
+) -> Parser<
+    'input,
+    'f,
+    u8,
+    Output,
+    impl 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+> {
+    wrapped(&b'[', p, &b']')
 }
+*/
 
 #[cfg(not(feature = "nightly"))]
 /// Parse an expression in brackets: `[...]`.
 #[inline(always)]
 #[must_use]
-pub fn bracketed<Output, Lazy: FnOnce() -> Parser<u8, Output>>(p: Lazy) -> Parser<u8, Output> {
-    wrapped(b'[', p, b']')
+pub fn bracketed<'input, 'f, Output: 'f, Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output>>(
+    p: Lazy,
+) -> Parser<'input, 'f, u8, Output> {
+    wrapped(&b'[', p, &b']')
 }
 
+// FIXME
+/*
 #[cfg(feature = "nightly")]
 /// Parse an expression in curly braces: `{...}`.
 #[inline(always)]
 #[must_use]
 pub fn braced<
+    'input,
+    'f,
     Output,
-    Call: FnOnce(&[u8]) -> result::Result<(Output, &[u8])>,
-    Lazy: FnOnce() -> Parser<u8, Output, Call>,
+    Call: 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+    Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output, Call>,
 >(
     p: Lazy,
-) -> Parser<u8, Output, impl FnOnce(&[u8]) -> result::Result<(Output, &[u8])>> {
-    wrapped(b'{', p, b'}')
+) -> Parser<
+    'input,
+    'f,
+    u8,
+    Output,
+    impl 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+> {
+    wrapped(&b'{', p, &b'}')
 }
+*/
 
 #[cfg(not(feature = "nightly"))]
 /// Parse an expression in curly braces: `{...}`.
 #[inline(always)]
 #[must_use]
-pub fn braced<Output, Lazy: FnOnce() -> Parser<u8, Output>>(p: Lazy) -> Parser<u8, Output> {
-    wrapped(b'{', p, b'}')
+pub fn braced<'input, 'f, Output: 'f, Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output>>(
+    p: Lazy,
+) -> Parser<'input, 'f, u8, Output> {
+    wrapped(&b'{', p, &b'}')
 }
 
+// FIXME
+/*
 #[cfg(feature = "nightly")]
 /// Parse an expression in angle brackets: `<...>`.
 #[inline(always)]
 #[must_use]
 pub fn angle_bracketed<
+    'input,
+    'f,
     Output,
     Stream,
-    Call: FnOnce(&[u8]) -> result::Result<(Output, &[u8])>,
-    Lazy: FnOnce() -> Parser<u8, Output, Call>,
+    Call: 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+    Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output, Call>,
 >(
     p: Lazy,
-) -> Parser<u8, Output, impl FnOnce(&[u8]) -> result::Result<(Output, &[u8])>> {
-    wrapped(b'<', p, b'>')
+) -> Parser<
+    'input,
+    'f,
+    u8,
+    Output,
+    impl 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+> {
+    wrapped(&b'<', p, &b'>')
 }
+*/
 
 #[cfg(not(feature = "nightly"))]
 /// Parse an expression in angle brackets: `<...>`.
 #[inline(always)]
 #[must_use]
-pub fn angle_bracketed<Output, Lazy: FnOnce() -> Parser<u8, Output>>(
+pub fn angle_bracketed<
+    'input,
+    'f,
+    Output: 'f,
+    Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output>,
+>(
     p: Lazy,
-) -> Parser<u8, Output> {
-    wrapped(b'<', p, b'>')
+) -> Parser<'input, 'f, u8, Output> {
+    wrapped(&b'<', p, &b'>')
 }
 
 #[cfg(feature = "nightly")]
 /// Skip zero or more items while this predicate holds on them. Do not skip the first one that doesn't hold (just peek, don't consume prematurely).
 #[inline(always)]
 #[must_use]
-pub fn skip_while<Input, Predicate: Fn(&Input) -> bool>(
+pub fn skip_while<'input, 'f, Input, Predicate: 'f + Fn(&'input Input) -> bool>(
     pred: Predicate,
-) -> Parser<Input, (), impl FnOnce(&[Input]) -> result::Result<((), &[Input])>> {
+) -> Parser<
+    'input,
+    'f,
+    Input,
+    (),
+    impl 'f + FnOnce(&'input [Input]) -> result::Result<((), &'input [Input])>,
+> {
     Parser::new(move |mut slice| {
         while let Some((head, tail)) = slice.split_first() {
             if pred(head) {
@@ -603,9 +627,9 @@ pub fn skip_while<Input, Predicate: Fn(&Input) -> bool>(
 /// Skip zero or more items while this predicate holds on them. Do not skip the first one that doesn't hold (just peek, don't consume prematurely).
 #[inline(always)]
 #[must_use]
-pub fn skip_while<Input, Predicate: 'static + Fn(&Input) -> bool>(
+pub fn skip_while<'input, 'f, Input, Predicate: 'f + Fn(&'input Input) -> bool>(
     pred: Predicate,
-) -> Parser<Input, ()> {
+) -> Parser<'input, 'f, Input, ()> {
     Parser::new(move |mut slice| {
         while let Some((head, tail)) = slice.split_first() {
             if pred(head) {
@@ -623,13 +647,21 @@ pub fn skip_while<Input, Predicate: 'static + Fn(&Input) -> bool>(
 #[inline(always)]
 #[must_use]
 pub fn parse_while<
+    'input,
+    'f,
     Input,
     Output,
-    Call: FnOnce(&[Input]) -> result::Result<(Output, &[Input])>,
-    Lazy: Fn() -> Parser<Input, Output, Call>,
+    Call: 'f + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
+    Lazy: 'f + Fn() -> Parser<'input, 'f, Input, Output, Call>,
 >(
     p: Lazy,
-) -> Parser<Input, Vec<Output>, impl FnOnce(&[Input]) -> result::Result<(Vec<Output>, &[Input])>> {
+) -> Parser<
+    'input,
+    'f,
+    Input,
+    Vec<Output>,
+    impl 'f + FnOnce(&'input [Input]) -> result::Result<(Vec<Output>, &'input [Input])>,
+> {
     Parser::new(move |slice| {
         let mut v = vec![];
         let mut etc = slice;
@@ -645,9 +677,15 @@ pub fn parse_while<
 /// Parse as many items as possible while the parser doesn't return an error. Do not skip the first one that doesn't hold (just peek, don't consume prematurely).
 #[inline(always)]
 #[must_use]
-pub fn parse_while<Input, Output, Lazy: 'static + Fn() -> Parser<Input, Output>>(
+pub fn parse_while<
+    'input,
+    'f,
+    Input,
+    Output: 'f,
+    Lazy: 'f + Fn() -> Parser<'input, 'f, Input, Output>,
+>(
     p: Lazy,
-) -> Parser<Input, Vec<Output>> {
+) -> Parser<'input, 'f, Input, Vec<Output>> {
     Parser::new(move |slice| {
         let mut v = vec![];
         let mut etc = slice;
@@ -671,18 +709,26 @@ parse_fn! {
 #[inline(always)]
 #[must_use]
 pub fn comma_separated<
+    'input,
+    'f,
     Output,
-    LazyCall: FnOnce(&[u8]) -> result::Result<(Output, &[u8])>,
-    Lazy: 'static + Fn() -> Parser<u8, Output, LazyCall>,
+    LazyCall: 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+    Lazy: 'f + Fn() -> Parser<'input, 'f, u8, Output, LazyCall>,
 >(
     p: Lazy,
-) -> Parser<u8, Vec<Output>, impl FnOnce(&[u8]) -> result::Result<(Vec<Output>, &[u8])>> {
+) -> Parser<
+    'input,
+    'f,
+    u8,
+    Vec<Output>,
+    impl 'f + FnOnce(&'input [u8]) -> result::Result<(Vec<Output>, &'input [u8])>,
+> {
     Parser::new(move |slice| {
         let mut results = vec![];
         let mut long_term_etc = whitespace().once(slice)?.1;
         while let Ok((out, etc)) = (p() << whitespace()).once(long_term_etc) {
             results.push(out);
-            long_term_etc = if let Ok((_, the_rest)) = (exact(b',') << whitespace()).once(etc) {
+            long_term_etc = if let Ok((_, the_rest)) = (exact(&b',') << whitespace()).once(etc) {
                 the_rest
             } else {
                 return Ok((results, etc));
@@ -696,15 +742,20 @@ pub fn comma_separated<
 /// Parse a comma-separated list (not in parentheses or anything—treat that separately).
 #[inline(always)]
 #[must_use]
-pub fn comma_separated<Output: 'static, Lazy: 'static + Fn() -> Parser<u8, Output>>(
+pub fn comma_separated<
+    'input,
+    'f,
+    Output: 'f,
+    Lazy: 'f + Fn() -> Parser<'input, 'f, u8, Output>,
+>(
     p: Lazy,
-) -> Parser<u8, Vec<Output>> {
+) -> Parser<'input, 'f, u8, Vec<Output>> {
     Parser::new(move |slice| {
         let mut results = vec![];
         let mut long_term_etc = whitespace().once(slice)?.1;
         while let Ok((out, etc)) = (p() << whitespace()).once(long_term_etc) {
             results.push(out);
-            long_term_etc = if let Ok((_, the_rest)) = (exact(b',') << whitespace()).once(etc) {
+            long_term_etc = if let Ok((_, the_rest)) = (exact(&b',') << whitespace()).once(etc) {
                 the_rest
             } else {
                 return Ok((results, etc));
@@ -724,23 +775,30 @@ pub mod precedence {
     #[inline(always)]
     #[must_use]
     #[allow(clippy::type_complexity)]
-    pub fn binops<
-        'a,
-        Output: 'static,
-        Call: FnOnce(&[u8]) -> result::Result<(Output, &[u8])>,
-        Lazy: Fn() -> Parser<u8, Output, Call>,
+    pub fn raw_binops<
+        'input,
+        'f,
+        Output,
+        Call: 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+        Lazy: 'f + Fn() -> Parser<'input, 'f, u8, Output, Call>,
     >(
         primary: Lazy,
-        operators: &'a [&'a [u8]],
+        operators: &'f ::alloc::collections::BTreeSet<&'input [u8]>,
     ) -> Parser<
+        'input,
+        'f,
         u8,
-        (Output, Vec<(&'a [u8], Output)>),
-        impl FnOnce(&[u8]) -> result::Result<((Output, Vec<(&'a [u8], Output)>), &[u8])>,
+        (Output, Vec<(&'input [u8], Output)>),
+        impl 'f
+            + FnOnce(
+                &'input [u8],
+            )
+                -> result::Result<((Output, Vec<(&'input [u8], Output)>), &'input [u8])>,
     > {
         Parser::new(move |slice| {
             let (first, first_etc) = primary().once(slice)?;
             let (rest, etc) =
-                parse_while(move || whitespace() >> any_seq(operators) & whitespace() >> primary())
+                parse_while(&|| whitespace() >> any_seq(operators) & whitespace() >> primary())
                     .once(first_etc)?;
             Ok(((first, rest), etc))
         })
@@ -751,14 +809,14 @@ pub mod precedence {
     #[inline(always)]
     #[must_use]
     #[allow(clippy::type_complexity)]
-    pub fn binops<'a, Output: 'static, Lazy: 'static + Fn() -> Parser<u8, Output>>(
+    pub fn raw_binops<'input, 'f, Output: 'f, Lazy: 'f + Fn() -> Parser<'input, 'f, u8, Output>>(
         primary: Lazy,
-        operators: &'a [&'a [u8]],
-    ) -> Parser<u8, (Output, Vec<(&'a [u8], Output)>)> {
+        operators: &'f ::alloc::collections::BTreeSet<&'input [u8]>,
+    ) -> Parser<'input, 'f, u8, (Output, Vec<(&'input [u8], Output)>)> {
         Parser::new(move |slice| {
             let (first, first_etc) = primary().once(slice)?;
             let (rest, etc) =
-                parse_while(move || whitespace() >> any_seq(operators) & whitespace() >> primary())
+                parse_while(|| whitespace() >> any_seq(operators) & whitespace() >> primary())
                     .once(first_etc)?;
             Ok(((first, rest), etc))
         })
