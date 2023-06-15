@@ -3,7 +3,7 @@
 
 See this example from `lib.rs`:
 ```rust
-let parser = exact(&b'(') >> verbatim() << exact(&b')') << end();
+let parser = exact(&b'(') >> verbatim() << exact(&b')');
 let input = b"(*)";
 assert_eq!(
     parser.parse(input),

@@ -203,3 +203,20 @@ proptest::proptest! {
         );
     }
 }
+
+#[test]
+fn parse_huge_ints() {
+    #![allow(clippy::as_conversions, clippy::assertions_on_result_states)]
+    const SMALLER: usize = usize::MAX;
+    const LARGER: u128 = (SMALLER as u128).overflowing_add(1).0;
+    assert_eq!(
+        unsigned_integer().parse(format!("{SMALLER:}").as_bytes()),
+        Ok(SMALLER)
+    );
+    if core::mem::size_of::<usize>() >= core::mem::size_of::<u128>() {
+        return; // nothing we can do on this machine
+    }
+    assert!(unsigned_integer()
+        .parse(format!("{LARGER:}").as_bytes())
+        .is_err());
+}
