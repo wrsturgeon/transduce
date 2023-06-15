@@ -66,9 +66,9 @@ macro_rules! parse_fn {
         #[inline(always)]
         #[must_use]
         $(#[$meta])*
-        $($pub)? fn $name<'input, 'f, $($($gen$(: $($lt +)? $bound $(+ $bounds)*)?),*)?>(
+        $($pub)? fn $name<'input, 'parser, $($($gen$(: $($lt +)? $bound $(+ $bounds)*)?),*)?>(
             $($arg: $arg_t),*
-        ) -> $crate::Parser<'input, 'f, $Input, $Output, impl 'f + ::core::ops::FnOnce(&'input [$Input]) -> $crate::result::Result<($Output, &'input [$Input])>> $body
+        ) -> $crate::Parser<'input, 'parser, $Input, $Output, impl 'parser + ::core::ops::FnOnce(&'input [$Input]) -> $crate::result::Result<($Output, &'input [$Input])>> $body
     };
 }
 
@@ -84,9 +84,9 @@ macro_rules! parse_fn {
         #[inline(always)]
         #[must_use]
         $(#[$meta])*
-        $($pub)? fn $name<'input, 'f, $($($gen$(: $($lt +)? $bound $(+ $bounds)*)?),*)?>(
+        $($pub)? fn $name<'input, 'parser, $($($gen$(: $($lt +)? $bound $(+ $bounds)*)?),*)?>(
             $($arg: $arg_t),*
-        ) -> $crate::Parser<'input, 'f, $Input, $Output> $body
+        ) -> $crate::Parser<'input, 'parser, $Input, $Output> $body
     };
 }
 
@@ -102,34 +102,34 @@ mod test;
 #[cfg(feature = "nightly")]
 /// Parser wrapping a unique templated callable type.
 pub struct Parser<
-    'input: 'f,
-    'f,
+    'input: 'parser,
+    'parser,
     Input,
     Output,
-    Call: 'f + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
+    Call: 'parser + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
 >(
     Call,
     ::core::marker::PhantomData<&'input Input>,
-    ::core::marker::PhantomData<&'f Output>,
+    ::core::marker::PhantomData<&'parser Output>,
 );
 
 #[cfg(not(feature = "nightly"))]
 /// Parser wrapping a boxed callable type.
-pub struct Parser<'input: 'f, 'f, Input, Output>(
+pub struct Parser<'input: 'parser, 'parser, Input, Output>(
     #[allow(clippy::type_complexity)]
-    Box<dyn 'f + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>>,
+    Box<dyn 'parser + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>>,
     ::core::marker::PhantomData<&'input Input>,
-    ::core::marker::PhantomData<&'f Output>,
+    ::core::marker::PhantomData<&'parser Output>,
 );
 
 #[cfg(feature = "nightly")]
 impl<
         'input,
-        'f,
+        'parser,
         Input,
         Output,
         Call: FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
-    > Parser<'input, 'f, Input, Output, Call>
+    > Parser<'input, 'parser, Input, Output, Call>
 {
     /// Construct a parser from a function with the correct signature.
     #[inline(always)]
@@ -206,13 +206,13 @@ impl<
         RightCall: FnOnce(&'input [Input]) -> result::Result<(RightOutput, &'input [Input])>,
     >(
         self,
-        right: Parser<'input, 'f, Input, RightOutput, RightCall>,
+        right: Parser<'input, 'parser, Input, RightOutput, RightCall>,
     ) -> Parser<
         'input,
-        'f,
+        'parser,
         Input,
         RightOutput,
-        impl 'f + FnOnce(&'input [Input]) -> result::Result<(RightOutput, &'input [Input])>,
+        impl 'parser + FnOnce(&'input [Input]) -> result::Result<(RightOutput, &'input [Input])>,
     > {
         #![allow(clippy::question_mark_used)]
         Parser::new(move |stream| right.once(self.once(stream)?.1))
@@ -226,13 +226,13 @@ impl<
         RightCall: FnOnce(&'input [Input]) -> result::Result<(RightOutput, &'input [Input])>,
     >(
         self,
-        right: Parser<'input, 'f, Input, RightOutput, RightCall>,
+        right: Parser<'input, 'parser, Input, RightOutput, RightCall>,
     ) -> Parser<
         'input,
-        'f,
+        'parser,
         Input,
         Output,
-        impl 'f + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
+        impl 'parser + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
     > {
         #![allow(clippy::question_mark_used)]
         Parser::new(move |stream| {
@@ -243,11 +243,13 @@ impl<
 }
 
 #[cfg(not(feature = "nightly"))]
-impl<'input: 'f, 'f, Input, Output: 'f> Parser<'input, 'f, Input, Output> {
+impl<'input: 'parser, 'parser, Input, Output: 'parser> Parser<'input, 'parser, Input, Output> {
     /// Construct a parser from a function with the correct signature.
     #[inline(always)]
     #[must_use]
-    pub fn new<F: 'f + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>>(
+    pub fn new<
+        F: 'parser + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
+    >(
         f: F,
     ) -> Self {
         Self(
@@ -320,10 +322,10 @@ impl<'input: 'f, 'f, Input, Output: 'f> Parser<'input, 'f, Input, Output> {
     /// Construct a new parser that performs an operation and discards its result then performs a second one and returns its result.
     #[inline(always)]
     #[must_use]
-    pub fn discard_left<RightOutput: 'f>(
+    pub fn discard_left<RightOutput: 'parser>(
         self,
-        right: Parser<'input, 'f, Input, RightOutput>,
-    ) -> Parser<'input, 'f, Input, RightOutput> {
+        right: Parser<'input, 'parser, Input, RightOutput>,
+    ) -> Parser<'input, 'parser, Input, RightOutput> {
         #![allow(clippy::question_mark_used)]
         Parser::new(|stream| right.once(self.once(stream)?.1))
     }
@@ -331,9 +333,9 @@ impl<'input: 'f, 'f, Input, Output: 'f> Parser<'input, 'f, Input, Output> {
     /// Construct a new parser that performs an operation and saves its result then performs a second one and discards its result, returning the first.
     #[inline(always)]
     #[must_use]
-    pub fn discard_right<RightOutput: 'f>(
+    pub fn discard_right<RightOutput: 'parser>(
         self,
-        right: Parser<'input, 'f, Input, RightOutput>,
+        right: Parser<'input, 'parser, Input, RightOutput>,
     ) -> Self {
         #![allow(clippy::question_mark_used)]
         Self::new(|stream| {
@@ -347,34 +349,35 @@ impl<'input: 'f, 'f, Input, Output: 'f> Parser<'input, 'f, Input, Output> {
 #[cfg(feature = "nightly")]
 impl<
         'input,
-        'f,
+        'parser,
         Input,
         Output,
-        Call: 'f + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
+        Call: 'parser + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
         RightOutput,
-        RightCall: 'f + FnOnce(&'input [Input]) -> result::Result<(RightOutput, &'input [Input])>,
-    > core::ops::Shr<Parser<'input, 'f, Input, RightOutput, RightCall>>
-    for Parser<'input, 'f, Input, Output, Call>
+        RightCall: 'parser + FnOnce(&'input [Input]) -> result::Result<(RightOutput, &'input [Input])>,
+    > core::ops::Shr<Parser<'input, 'parser, Input, RightOutput, RightCall>>
+    for Parser<'input, 'parser, Input, Output, Call>
 {
     type Output = Parser<
         'input,
-        'f,
+        'parser,
         Input,
         RightOutput,
-        impl 'f + FnOnce(&'input [Input]) -> result::Result<(RightOutput, &'input [Input])>,
+        impl 'parser + FnOnce(&'input [Input]) -> result::Result<(RightOutput, &'input [Input])>,
     >;
     #[inline(always)]
     #[must_use]
-    fn shr(self, rhs: Parser<'input, 'f, Input, RightOutput, RightCall>) -> Self::Output {
+    fn shr(self, rhs: Parser<'input, 'parser, Input, RightOutput, RightCall>) -> Self::Output {
         self.discard_left(rhs)
     }
 }
 
 #[cfg(not(feature = "nightly"))]
-impl<'input: 'f, 'f, Input, Output: 'f, RightOutput: 'f>
-    core::ops::Shr<Parser<'input, 'f, Input, RightOutput>> for Parser<'input, 'f, Input, Output>
+impl<'input: 'parser, 'parser, Input, Output: 'parser, RightOutput: 'parser>
+    core::ops::Shr<Parser<'input, 'parser, Input, RightOutput>>
+    for Parser<'input, 'parser, Input, Output>
 {
-    type Output = Parser<'input, 'f, Input, RightOutput>;
+    type Output = Parser<'input, 'parser, Input, RightOutput>;
     #[inline(always)]
     #[must_use]
     fn shr(self, rhs: Self::Output) -> Self::Output {
@@ -385,37 +388,38 @@ impl<'input: 'f, 'f, Input, Output: 'f, RightOutput: 'f>
 #[cfg(feature = "nightly")]
 impl<
         'input,
-        'f,
+        'parser,
         Input,
         Output,
-        Call: 'f + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
+        Call: 'parser + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
         RightOutput,
-        RightCall: 'f + FnOnce(&'input [Input]) -> result::Result<(RightOutput, &'input [Input])>,
-    > core::ops::Shl<Parser<'input, 'f, Input, RightOutput, RightCall>>
-    for Parser<'input, 'f, Input, Output, Call>
+        RightCall: 'parser + FnOnce(&'input [Input]) -> result::Result<(RightOutput, &'input [Input])>,
+    > core::ops::Shl<Parser<'input, 'parser, Input, RightOutput, RightCall>>
+    for Parser<'input, 'parser, Input, Output, Call>
 {
     type Output = Parser<
         'input,
-        'f,
+        'parser,
         Input,
         Output,
-        impl 'f + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
+        impl 'parser + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
     >;
     #[inline(always)]
     #[must_use]
-    fn shl(self, rhs: Parser<'input, 'f, Input, RightOutput, RightCall>) -> Self::Output {
+    fn shl(self, rhs: Parser<'input, 'parser, Input, RightOutput, RightCall>) -> Self::Output {
         self.discard_right(rhs)
     }
 }
 
 #[cfg(not(feature = "nightly"))]
-impl<'input: 'f, 'f, Input, Output: 'f, RightOutput: 'f>
-    core::ops::Shl<Parser<'input, 'f, Input, RightOutput>> for Parser<'input, 'f, Input, Output>
+impl<'input: 'parser, 'parser, Input, Output: 'parser, RightOutput: 'parser>
+    core::ops::Shl<Parser<'input, 'parser, Input, RightOutput>>
+    for Parser<'input, 'parser, Input, Output>
 {
     type Output = Self;
     #[inline(always)]
     #[must_use]
-    fn shl(self, rhs: Parser<'input, 'f, Input, RightOutput>) -> Self::Output {
+    fn shl(self, rhs: Parser<'input, 'parser, Input, RightOutput>) -> Self::Output {
         self.discard_right(rhs)
     }
 }
@@ -423,25 +427,26 @@ impl<'input: 'f, 'f, Input, Output: 'f, RightOutput: 'f>
 #[cfg(feature = "nightly")]
 impl<
         'input,
-        'f,
+        'parser,
         Input,
         Output,
-        Call: 'f + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
+        Call: 'parser + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
         RightOutput,
-        RightCall: 'f + FnOnce(&'input [Input]) -> result::Result<(RightOutput, &'input [Input])>,
-    > core::ops::BitAnd<Parser<'input, 'f, Input, RightOutput, RightCall>>
-    for Parser<'input, 'f, Input, Output, Call>
+        RightCall: 'parser + FnOnce(&'input [Input]) -> result::Result<(RightOutput, &'input [Input])>,
+    > core::ops::BitAnd<Parser<'input, 'parser, Input, RightOutput, RightCall>>
+    for Parser<'input, 'parser, Input, Output, Call>
 {
     type Output = Parser<
         'input,
-        'f,
+        'parser,
         Input,
         (Output, RightOutput),
-        impl 'f + FnOnce(&'input [Input]) -> result::Result<((Output, RightOutput), &'input [Input])>,
+        impl 'parser
+            + FnOnce(&'input [Input]) -> result::Result<((Output, RightOutput), &'input [Input])>,
     >;
     #[inline(always)]
     #[must_use]
-    fn bitand(self, rhs: Parser<'input, 'f, Input, RightOutput, RightCall>) -> Self::Output {
+    fn bitand(self, rhs: Parser<'input, 'parser, Input, RightOutput, RightCall>) -> Self::Output {
         Parser::new(move |stream| {
             let (left, first_etc) = self.once(stream)?;
             let (right, etc) = rhs.once(first_etc)?;
@@ -451,14 +456,14 @@ impl<
 }
 
 #[cfg(not(feature = "nightly"))]
-impl<'input: 'f, 'f, Input, Output: 'f, RightOutput: 'f>
-    core::ops::BitAnd<Parser<'input, 'f, Input, RightOutput>>
-    for Parser<'input, 'f, Input, Output>
+impl<'input: 'parser, 'parser, Input, Output: 'parser, RightOutput: 'parser>
+    core::ops::BitAnd<Parser<'input, 'parser, Input, RightOutput>>
+    for Parser<'input, 'parser, Input, Output>
 {
-    type Output = Parser<'input, 'f, Input, (Output, RightOutput)>;
+    type Output = Parser<'input, 'parser, Input, (Output, RightOutput)>;
     #[inline(always)]
     #[must_use]
-    fn bitand(self, rhs: Parser<'input, 'f, Input, RightOutput>) -> Self::Output {
+    fn bitand(self, rhs: Parser<'input, 'parser, Input, RightOutput>) -> Self::Output {
         Parser::new(|stream| {
             let (left, first_etc) = self.once(stream)?;
             let (right, etc) = rhs.once(first_etc)?;
@@ -470,20 +475,20 @@ impl<'input: 'f, 'f, Input, Output: 'f, RightOutput: 'f>
 #[cfg(feature = "nightly")]
 impl<
         'input,
-        'f,
+        'parser,
         Input,
         Output,
-        Call: 'f + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
-        RightCall: 'f + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
-        Lazy: 'f + FnOnce() -> Parser<'input, 'f, Input, Output, RightCall>,
-    > core::ops::BitOr<Lazy> for Parser<'input, 'f, Input, Output, Call>
+        Call: 'parser + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
+        RightCall: 'parser + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
+        Lazy: 'parser + FnOnce() -> Parser<'input, 'parser, Input, Output, RightCall>,
+    > core::ops::BitOr<Lazy> for Parser<'input, 'parser, Input, Output, Call>
 {
     type Output = Parser<
         'input,
-        'f,
+        'parser,
         Input,
         Output,
-        impl 'f + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
+        impl 'parser + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
     >;
     #[inline(always)]
     #[must_use]
@@ -496,8 +501,8 @@ impl<
 }
 
 #[cfg(not(feature = "nightly"))]
-impl<'input, 'f, Input, Output: 'f, Lazy: 'f + FnOnce() -> Self> core::ops::BitOr<Lazy>
-    for Parser<'input, 'f, Input, Output>
+impl<'input, 'parser, Input, Output: 'parser, Lazy: 'parser + FnOnce() -> Self>
+    core::ops::BitOr<Lazy> for Parser<'input, 'parser, Input, Output>
 {
     type Output = Self;
     #[inline(always)]
@@ -513,20 +518,20 @@ impl<'input, 'f, Input, Output: 'f, Lazy: 'f + FnOnce() -> Self> core::ops::BitO
 #[cfg(feature = "nightly")]
 impl<
         'input,
-        'f,
+        'parser,
         Input,
         Output,
-        Call: 'f + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
-        F: 'f + FnOnce(Output) -> PostOutput,
-        PostOutput: 'f,
-    > core::ops::BitXor<F> for Parser<'input, 'f, Input, Output, Call>
+        Call: 'parser + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
+        F: 'parser + FnOnce(Output) -> PostOutput,
+        PostOutput: 'parser,
+    > core::ops::BitXor<F> for Parser<'input, 'parser, Input, Output, Call>
 {
     type Output = Parser<
         'input,
-        'f,
+        'parser,
         Input,
         PostOutput,
-        impl 'f + FnOnce(&'input [Input]) -> result::Result<(PostOutput, &'input [Input])>,
+        impl 'parser + FnOnce(&'input [Input]) -> result::Result<(PostOutput, &'input [Input])>,
     >;
     #[inline(always)]
     #[must_use]
@@ -539,10 +544,16 @@ impl<
 }
 
 #[cfg(not(feature = "nightly"))]
-impl<'input, 'f, Input, Output: 'f, F: 'f + FnOnce(Output) -> PostOutput, PostOutput: 'f>
-    core::ops::BitXor<F> for Parser<'input, 'f, Input, Output>
+impl<
+        'input,
+        'parser,
+        Input,
+        Output: 'parser,
+        F: 'parser + FnOnce(Output) -> PostOutput,
+        PostOutput: 'parser,
+    > core::ops::BitXor<F> for Parser<'input, 'parser, Input, Output>
 {
-    type Output = Parser<'input, 'f, Input, PostOutput>;
+    type Output = Parser<'input, 'parser, Input, PostOutput>;
     #[inline(always)]
     #[must_use]
     fn bitxor(self, rhs: F) -> Self::Output {
@@ -554,20 +565,20 @@ impl<'input, 'f, Input, Output: 'f, F: 'f + FnOnce(Output) -> PostOutput, PostOu
 }
 
 /// Read a series of characters (actually `u8`s) into this type.
-pub trait Read<'input, 'f>: Sized {
+pub trait Read<'input, 'parser>: Sized {
     #[cfg(feature = "nightly")]
     /// Create a parser that can read `u8`s into this type.
     #[must_use]
     fn parser() -> Parser<
         'input,
-        'f,
+        'parser,
         u8,
         Self,
-        impl 'f + FnOnce(&'input [u8]) -> result::Result<(Self, &'input [u8])>,
+        impl 'parser + FnOnce(&'input [u8]) -> result::Result<(Self, &'input [u8])>,
     >;
 
     #[cfg(not(feature = "nightly"))]
     /// Create a parser that can read `u8`s into this type.
     #[must_use]
-    fn parser() -> Parser<'input, 'f, u8, Self>;
+    fn parser() -> Parser<'input, 'parser, u8, Self>;
 }

@@ -35,14 +35,14 @@ macro_rules! end_of_input {
 /// Skip zero or more items while this predicate holds on them. Do not skip the first one that doesn't hold (just peek, don't consume prematurely).
 #[inline(always)]
 #[must_use]
-pub fn satisfies<'input, 'f, Input, Predicate: 'f + FnOnce(&'input Input) -> bool>(
+pub fn satisfies<'input, 'parser, Input, Predicate: 'parser + FnOnce(&'input Input) -> bool>(
     pred: Predicate,
 ) -> Parser<
     'input,
-    'f,
+    'parser,
     Input,
     &'input Input,
-    impl 'f + FnOnce(&'input [Input]) -> result::Result<(&'input Input, &'input [Input])>,
+    impl 'parser + FnOnce(&'input [Input]) -> result::Result<(&'input Input, &'input [Input])>,
 > {
     Parser::new(|slice| {
         if let Some((head, tail)) = slice.split_first() {
@@ -61,9 +61,9 @@ pub fn satisfies<'input, 'f, Input, Predicate: 'f + FnOnce(&'input Input) -> boo
 /// Skip zero or more items while this predicate holds on them. Do not skip the first one that doesn't hold (just peek, don't consume prematurely).
 #[inline(always)]
 #[must_use]
-pub fn satisfies<'input, 'f, Input, Predicate: 'f + FnOnce(&'input Input) -> bool>(
+pub fn satisfies<'input, 'parser, Input, Predicate: 'parser + FnOnce(&'input Input) -> bool>(
     pred: Predicate,
-) -> Parser<'input, 'f, Input, &'input Input> {
+) -> Parser<'input, 'parser, Input, &'input Input> {
     Parser::new(|slice| {
         if let Some((head, tail)) = slice.split_first() {
             if pred(head) {
@@ -91,7 +91,7 @@ parse_fn! {
 
 parse_fn! {
     /// Match an exact value (via `PartialEq`) and return a clone.
-    pub fn exact<I: PartialEq + Debug>(expect: &'f I) -> (I => &'input I) {
+    pub fn exact<I: PartialEq + Debug>(expect: &'parser I) -> (I => &'input I) {
         Parser::new(move |slice| match slice.split_first() {
             None => end_of_input!(),
             Some((head, tail)) => {
@@ -107,7 +107,7 @@ parse_fn! {
 
 parse_fn! {
     /// Match an exact sequence of items (via `PartialEq`) and return a reference to the original, not the parsed input.
-    pub fn exact_seq<I: PartialEq + Debug>(expect: &'f [I]) -> (I => &'f [I]) {
+    pub fn exact_seq<I: PartialEq + Debug>(expect: &'parser [I]) -> (I => &'parser [I]) {
         Parser::new(move |slice| {
             let mut etc = slice;
             for i in expect {
@@ -131,7 +131,7 @@ parse_fn! {
 
 parse_fn! {
     /// Match any of a set of options. Set represented as a binary tree for efficiency.
-    pub fn any<I: Debug + Ord>(expect: &'f ::alloc::collections::BTreeSet<I>) -> (I => &'f I) {
+    pub fn any<I: Debug + Ord>(expect: &'parser ::alloc::collections::BTreeSet<I>) -> (I => &'parser I) {
         Parser::new(move |slice| match slice.split_first() {
             None => end_of_input!(),
             Some((head, tail)) => {
@@ -150,7 +150,7 @@ parse_fn! {
 
 parse_fn! {
     /// Match any of a set of options. Set represented as a binary tree for efficiency.
-    pub fn any_seq<I: Debug + Ord>(expect: &'f ::alloc::collections::BTreeSet<&'input [I]>) -> (I => &'input [I]) {
+    pub fn any_seq<I: Debug + Ord>(expect: &'parser ::alloc::collections::BTreeSet<&'input [I]>) -> (I => &'input [I]) {
         Parser::new(move |slice| {
             let Some((head, _)) = slice.split_first() else { end_of_input!() };
             for option in expect.range(core::slice::from_ref(head)..=slice) {
@@ -369,15 +369,15 @@ parse_fn! {
 #[must_use]
 pub fn optional<
     'input,
-    'f,
+    'parser,
     Output,
-    Call: 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
-    Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output, Call>,
+    Call: 'parser + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+    Lazy: 'parser + FnOnce() -> Parser<'input, 'parser, u8, Output, Call>,
 >(
     p: Lazy,
 ) -> Parser<
     'input,
-    'f,
+    'parser,
     u8,
     Option<Output>,
     impl FnOnce(&'input [u8]) -> result::Result<(Option<Output>, &'input [u8])>,
@@ -392,9 +392,14 @@ pub fn optional<
 /// If you can match, return it; if not, stay in the same place.
 #[inline(always)]
 #[must_use]
-pub fn optional<'input, 'f, Output: 'f, Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output>>(
+pub fn optional<
+    'input,
+    'parser,
+    Output: 'parser,
+    Lazy: 'parser + FnOnce() -> Parser<'input, 'parser, u8, Output>,
+>(
     p: Lazy,
-) -> Parser<'input, 'f, u8, Option<Output>> {
+) -> Parser<'input, 'parser, u8, Option<Output>> {
     Parser::new(|stream| match p().once(stream) {
         Ok((parsed, etc)) => Ok((Some(parsed), etc)),
         Err(_) => Ok((None, stream)),
@@ -409,21 +414,21 @@ pub fn optional<'input, 'f, Output: 'f, Lazy: 'f + FnOnce() -> Parser<'input, 'f
 #[must_use]
 pub fn wrapped<
     'input,
-    'f,
+    'parser,
     Input: PartialEq + Debug,
-    Output: 'f,
-    Call: 'f + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
-    Lazy: 'f + FnOnce() -> Parser<'input, 'f, Input, Output, Call>,
+    Output: 'parser,
+    Call: 'parser + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
+    Lazy: 'parser + FnOnce() -> Parser<'input, 'parser, Input, Output, Call>,
 >(
-    before: &'f Input,
+    before: &'parser Input,
     p: Lazy,
-    after: &'f Input,
+    after: &'parser Input,
 ) -> Parser<
     'input,
-    'f,
+    'parser,
     Input,
     Output,
-    impl 'f + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
+    impl 'parser + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
 > {
     exact(before) >> p() << exact(after)
 }
@@ -435,15 +440,15 @@ pub fn wrapped<
 #[must_use]
 pub fn wrapped<
     'input,
-    'f,
+    'parser,
     Input: PartialEq + Debug,
-    Output: 'f,
-    Lazy: 'f + FnOnce() -> Parser<'input, 'f, Input, Output>,
+    Output: 'parser,
+    Lazy: 'parser + FnOnce() -> Parser<'input, 'parser, Input, Output>,
 >(
-    before: &'f Input,
+    before: &'parser Input,
     p: Lazy,
-    after: &'f Input,
-) -> Parser<'input, 'f, Input, Output> {
+    after: &'parser Input,
+) -> Parser<'input, 'parser, Input, Output> {
     exact(before) >> p() << exact(after)
 }
 
@@ -455,18 +460,18 @@ pub fn wrapped<
 #[must_use]
 pub fn parenthesized<
     'input,
-    'f,
+    'parser,
     Output,
-    Call: 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
-    Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output, Call>,
+    Call: 'parser + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+    Lazy: 'parser + FnOnce() -> Parser<'input, 'parser, u8, Output, Call>,
 >(
     p: Lazy,
 ) -> Parser<
     'input,
-    'f,
+    'parser,
     u8,
     Output,
-    impl 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+    impl 'parser + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
 > {
     wrapped(&b'(', p, &b')')
 }
@@ -478,12 +483,12 @@ pub fn parenthesized<
 #[must_use]
 pub fn parenthesized<
     'input,
-    'f,
-    Output: 'f,
-    Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output>,
+    'parser,
+    Output: 'parser,
+    Lazy: 'parser + FnOnce() -> Parser<'input, 'parser, u8, Output>,
 >(
     p: Lazy,
-) -> Parser<'input, 'f, u8, Output> {
+) -> Parser<'input, 'parser, u8, Output> {
     wrapped(&b'(', p, &b')')
 }
 
@@ -495,18 +500,18 @@ pub fn parenthesized<
 #[must_use]
 pub fn bracketed<
     'input,
-    'f,
+    'parser,
     Output,
-    Call: 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
-    Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output, Call>,
+    Call: 'parser + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+    Lazy: 'parser + FnOnce() -> Parser<'input, 'parser, u8, Output, Call>,
 >(
     p: Lazy,
 ) -> Parser<
     'input,
-    'f,
+    'parser,
     u8,
     Output,
-    impl 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+    impl 'parser + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
 > {
     wrapped(&b'[', p, &b']')
 }
@@ -516,9 +521,14 @@ pub fn bracketed<
 /// Parse an expression in brackets: `[...]`.
 #[inline(always)]
 #[must_use]
-pub fn bracketed<'input, 'f, Output: 'f, Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output>>(
+pub fn bracketed<
+    'input,
+    'parser,
+    Output: 'parser,
+    Lazy: 'parser + FnOnce() -> Parser<'input, 'parser, u8, Output>,
+>(
     p: Lazy,
-) -> Parser<'input, 'f, u8, Output> {
+) -> Parser<'input, 'parser, u8, Output> {
     wrapped(&b'[', p, &b']')
 }
 
@@ -530,18 +540,18 @@ pub fn bracketed<'input, 'f, Output: 'f, Lazy: 'f + FnOnce() -> Parser<'input, '
 #[must_use]
 pub fn braced<
     'input,
-    'f,
+    'parser,
     Output,
-    Call: 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
-    Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output, Call>,
+    Call: 'parser + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+    Lazy: 'parser + FnOnce() -> Parser<'input, 'parser, u8, Output, Call>,
 >(
     p: Lazy,
 ) -> Parser<
     'input,
-    'f,
+    'parser,
     u8,
     Output,
-    impl 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+    impl 'parser + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
 > {
     wrapped(&b'{', p, &b'}')
 }
@@ -551,9 +561,14 @@ pub fn braced<
 /// Parse an expression in curly braces: `{...}`.
 #[inline(always)]
 #[must_use]
-pub fn braced<'input, 'f, Output: 'f, Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output>>(
+pub fn braced<
+    'input,
+    'parser,
+    Output: 'parser,
+    Lazy: 'parser + FnOnce() -> Parser<'input, 'parser, u8, Output>,
+>(
     p: Lazy,
-) -> Parser<'input, 'f, u8, Output> {
+) -> Parser<'input, 'parser, u8, Output> {
     wrapped(&b'{', p, &b'}')
 }
 
@@ -565,19 +580,19 @@ pub fn braced<'input, 'f, Output: 'f, Lazy: 'f + FnOnce() -> Parser<'input, 'f, 
 #[must_use]
 pub fn angle_bracketed<
     'input,
-    'f,
+    'parser,
     Output,
     Stream,
-    Call: 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
-    Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output, Call>,
+    Call: 'parser + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+    Lazy: 'parser + FnOnce() -> Parser<'input, 'parser, u8, Output, Call>,
 >(
     p: Lazy,
 ) -> Parser<
     'input,
-    'f,
+    'parser,
     u8,
     Output,
-    impl 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+    impl 'parser + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
 > {
     wrapped(&b'<', p, &b'>')
 }
@@ -589,12 +604,12 @@ pub fn angle_bracketed<
 #[must_use]
 pub fn angle_bracketed<
     'input,
-    'f,
-    Output: 'f,
-    Lazy: 'f + FnOnce() -> Parser<'input, 'f, u8, Output>,
+    'parser,
+    Output: 'parser,
+    Lazy: 'parser + FnOnce() -> Parser<'input, 'parser, u8, Output>,
 >(
     p: Lazy,
-) -> Parser<'input, 'f, u8, Output> {
+) -> Parser<'input, 'parser, u8, Output> {
     wrapped(&b'<', p, &b'>')
 }
 
@@ -602,14 +617,14 @@ pub fn angle_bracketed<
 /// Skip zero or more items while this predicate holds on them. Do not skip the first one that doesn't hold (just peek, don't consume prematurely).
 #[inline(always)]
 #[must_use]
-pub fn skip_while<'input, 'f, Input, Predicate: 'f + Fn(&'input Input) -> bool>(
+pub fn skip_while<'input, 'parser, Input, Predicate: 'parser + Fn(&'input Input) -> bool>(
     pred: Predicate,
 ) -> Parser<
     'input,
-    'f,
+    'parser,
     Input,
     (),
-    impl 'f + FnOnce(&'input [Input]) -> result::Result<((), &'input [Input])>,
+    impl 'parser + FnOnce(&'input [Input]) -> result::Result<((), &'input [Input])>,
 > {
     Parser::new(move |mut slice| {
         while let Some((head, tail)) = slice.split_first() {
@@ -627,9 +642,9 @@ pub fn skip_while<'input, 'f, Input, Predicate: 'f + Fn(&'input Input) -> bool>(
 /// Skip zero or more items while this predicate holds on them. Do not skip the first one that doesn't hold (just peek, don't consume prematurely).
 #[inline(always)]
 #[must_use]
-pub fn skip_while<'input, 'f, Input, Predicate: 'f + Fn(&'input Input) -> bool>(
+pub fn skip_while<'input, 'parser, Input, Predicate: 'parser + Fn(&'input Input) -> bool>(
     pred: Predicate,
-) -> Parser<'input, 'f, Input, ()> {
+) -> Parser<'input, 'parser, Input, ()> {
     Parser::new(move |mut slice| {
         while let Some((head, tail)) = slice.split_first() {
             if pred(head) {
@@ -648,19 +663,19 @@ pub fn skip_while<'input, 'f, Input, Predicate: 'f + Fn(&'input Input) -> bool>(
 #[must_use]
 pub fn parse_while<
     'input,
-    'f,
+    'parser,
     Input,
     Output,
-    Call: 'f + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
-    Lazy: 'f + Fn() -> Parser<'input, 'f, Input, Output, Call>,
+    Call: 'parser + FnOnce(&'input [Input]) -> result::Result<(Output, &'input [Input])>,
+    Lazy: 'parser + Fn() -> Parser<'input, 'parser, Input, Output, Call>,
 >(
     p: Lazy,
 ) -> Parser<
     'input,
-    'f,
+    'parser,
     Input,
     Vec<Output>,
-    impl 'f + FnOnce(&'input [Input]) -> result::Result<(Vec<Output>, &'input [Input])>,
+    impl 'parser + FnOnce(&'input [Input]) -> result::Result<(Vec<Output>, &'input [Input])>,
 > {
     Parser::new(move |slice| {
         let mut v = vec![];
@@ -679,13 +694,13 @@ pub fn parse_while<
 #[must_use]
 pub fn parse_while<
     'input,
-    'f,
+    'parser,
     Input,
-    Output: 'f,
-    Lazy: 'f + Fn() -> Parser<'input, 'f, Input, Output>,
+    Output: 'parser,
+    Lazy: 'parser + Fn() -> Parser<'input, 'parser, Input, Output>,
 >(
     p: Lazy,
-) -> Parser<'input, 'f, Input, Vec<Output>> {
+) -> Parser<'input, 'parser, Input, Vec<Output>> {
     Parser::new(move |slice| {
         let mut v = vec![];
         let mut etc = slice;
@@ -710,18 +725,18 @@ parse_fn! {
 #[must_use]
 pub fn comma_separated<
     'input,
-    'f,
+    'parser,
     Output,
-    LazyCall: 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
-    Lazy: 'f + Fn() -> Parser<'input, 'f, u8, Output, LazyCall>,
+    LazyCall: 'parser + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+    Lazy: 'parser + Fn() -> Parser<'input, 'parser, u8, Output, LazyCall>,
 >(
     p: Lazy,
 ) -> Parser<
     'input,
-    'f,
+    'parser,
     u8,
     Vec<Output>,
-    impl 'f + FnOnce(&'input [u8]) -> result::Result<(Vec<Output>, &'input [u8])>,
+    impl 'parser + FnOnce(&'input [u8]) -> result::Result<(Vec<Output>, &'input [u8])>,
 > {
     Parser::new(move |slice| {
         let mut results = vec![];
@@ -744,12 +759,12 @@ pub fn comma_separated<
 #[must_use]
 pub fn comma_separated<
     'input,
-    'f,
-    Output: 'f,
-    Lazy: 'f + Fn() -> Parser<'input, 'f, u8, Output>,
+    'parser,
+    Output: 'parser,
+    Lazy: 'parser + Fn() -> Parser<'input, 'parser, u8, Output>,
 >(
     p: Lazy,
-) -> Parser<'input, 'f, u8, Vec<Output>> {
+) -> Parser<'input, 'parser, u8, Vec<Output>> {
     Parser::new(move |slice| {
         let mut results = vec![];
         let mut long_term_etc = whitespace().once(slice)?.1;
@@ -777,19 +792,19 @@ pub mod precedence {
     #[allow(clippy::type_complexity)]
     pub fn raw_binops<
         'input,
-        'f,
+        'parser,
         Output,
-        Call: 'f + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
-        Lazy: 'f + Fn() -> Parser<'input, 'f, u8, Output, Call>,
+        Call: 'parser + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
+        Lazy: 'parser + Fn() -> Parser<'input, 'parser, u8, Output, Call>,
     >(
         primary: Lazy,
-        operators: &'f ::alloc::collections::BTreeSet<&'input [u8]>,
+        operators: &'parser ::alloc::collections::BTreeSet<&'input [u8]>,
     ) -> Parser<
         'input,
-        'f,
+        'parser,
         u8,
         (Output, Vec<(&'input [u8], Output)>),
-        impl 'f
+        impl 'parser
             + FnOnce(
                 &'input [u8],
             )
@@ -809,10 +824,15 @@ pub mod precedence {
     #[inline(always)]
     #[must_use]
     #[allow(clippy::type_complexity)]
-    pub fn raw_binops<'input, 'f, Output: 'f, Lazy: 'f + Fn() -> Parser<'input, 'f, u8, Output>>(
+    pub fn raw_binops<
+        'input,
+        'parser,
+        Output: 'parser,
+        Lazy: 'parser + Fn() -> Parser<'input, 'parser, u8, Output>,
+    >(
         primary: Lazy,
-        operators: &'f ::alloc::collections::BTreeSet<&'input [u8]>,
-    ) -> Parser<'input, 'f, u8, (Output, Vec<(&'input [u8], Output)>)> {
+        operators: &'parser ::alloc::collections::BTreeSet<&'input [u8]>,
+    ) -> Parser<'input, 'parser, u8, (Output, Vec<(&'input [u8], Output)>)> {
         Parser::new(move |slice| {
             let (first, first_etc) = primary().once(slice)?;
             let (rest, etc) =
