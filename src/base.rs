@@ -6,12 +6,13 @@
 
 //! Common functions to drop in instead of reinventing the wheel.
 
-#![allow(unreachable_code)] // TODO: REMOVE
+#![allow(clippy::tests_outside_test_module)]
 
 use crate::{bail, print_error::PrintError, Parse, ParseError, Parser};
 use alloc::{collections::BTreeSet, format, string::String, vec /* the macro */, vec::Vec};
 use core::marker::PhantomData;
 
+/// Property test active only when testing (not in debug or release builds).
 macro_rules! ptest {
     ($($tt:tt)*) => {
         #[cfg(test)]
@@ -50,13 +51,15 @@ impl<'input, Input: PrintError> Parse<'input, 'static> for End<Input> {
     }
 }
 /// Make sure we've reached exactly the end of the stream of input; don't advance to it.
+#[inline(always)]
+#[must_use]
 pub const fn end<'input, Input: PrintError>() -> Parser<'input, 'static, End<Input>> {
     Parser::new(End(PhantomData))
 }
 ptest! {
     #[test]
     fn prop_end(slice: Vec<u8>) {
-        assert_eq!(end().parse(&slice[..]).is_ok(), slice.is_empty());
+        assert_eq!(end().parse(&slice).is_ok(), slice.is_empty());
     }
 }
 
@@ -81,6 +84,8 @@ impl<'input: 'output, 'output, Input: 'output + PrintError> Parse<'input, 'outpu
     }
 }
 /// Match any single item and return a reference to it.
+#[inline(always)]
+#[must_use]
 pub const fn anything<'input: 'output, 'output, Input: 'output + PrintError>(
 ) -> Parser<'input, 'output, Anything<Input>> {
     Parser::new(Anything(PhantomData))
@@ -113,7 +118,7 @@ ptest! {
     fn prop_satisfy(input: u8, threshold: u8) {
         let pred = move |x: &u8| x < &threshold;
         let slice = &[input];
-        assert_eq!(pred(&input), satisfy(pred, |_| String::from("")).parse(slice).is_ok());
+        assert_eq!(pred(&input), satisfy(pred, |_| String::new()).parse(slice).is_ok());
     }
 }
 
@@ -136,7 +141,7 @@ ptest! {
     fn prop_satisfy_result(input: u8, threshold: u8) {
         let pred = move |x: &u8| x < &threshold;
         let slice = &[input];
-        assert_eq!(pred(&input), satisfy_result(move |x| if pred(x) { Ok(()) } else { Err(String::from("")) }).parse(slice).is_ok());
+        assert_eq!(pred(&input), satisfy_result(move |x| if pred(x) { Ok(()) } else { Err(String::new()) }).parse(slice).is_ok());
     }
 }
 
@@ -161,7 +166,7 @@ ptest! {
     fn prop_not(input: u8, threshold: u8) {
         let pred = move |x: &u8| x < &threshold;
         let slice = &[input];
-        assert_eq!(pred(&input), not(pred, |_| String::from("")).parse(slice).is_err());
+        assert_eq!(pred(&input), not(pred, |_| String::new()).parse(slice).is_err());
     }
 }
 
@@ -220,20 +225,24 @@ impl<'input, 'output, Input: PartialEq + PrintError> Parse<'input, 'output>
     }
 }
 /// Match exactly this sequence of items.
-pub const fn exact_seq<'input, 'output, Input: PartialEq + PrintError>(
-    exactly: &'output [Input],
-) -> Parser<'input, 'output, ExactSeq<'output, Input>> {
+#[inline(always)]
+#[must_use]
+pub const fn exact_seq<'input, Input: PartialEq + PrintError>(
+    exactly: &[Input],
+) -> Parser<'input, '_, ExactSeq<'_, Input>> {
     Parser::new(ExactSeq(exactly))
 }
 ptest! {
     #[test]
     fn prop_exact_seq(a: Vec<u8>, b: Vec<u8>) {
-        assert_eq!(exact_seq(&a[..]).parse(&a[..]), Ok(&a[..]));
-        assert_eq!(exact_seq(&a[..]).parse(&b[..]).is_ok(), a == b);
+        assert_eq!(exact_seq(&a).parse(&a), Ok(&*a));
+        assert_eq!(exact_seq(&a).parse(&b).is_ok(), a == b);
     }
 }
 
 /// Match any of a set of options. Set represented as a binary tree for efficient lookup.
+#[inline(always)]
+#[must_use]
 pub fn any<'input: 'output, 'output, Input: 'output + Ord + PrintError>(
     set: BTreeSet<Input>,
 ) -> Parser<'input, 'output, impl Parse<'input, 'output, Input = Input, Output = &'output Input>> {
@@ -282,7 +291,9 @@ impl<'input: 'output, 'output, Input: Ord + PrintError> Parse<'input, 'output>
     }
 }
 /// Match any of a set of sequences of options. Set represented as a binary tree for efficient lookup.
-pub fn any_seq<'input: 'output, 'output, Input: Ord + PrintError>(
+#[inline(always)]
+#[must_use]
+pub const fn any_seq<'input: 'output, 'output, Input: Ord + PrintError>(
     set: BTreeSet<&'output [Input]>,
 ) -> Parser<'input, 'output, AnySeq<'output, Input>> {
     Parser::new(AnySeq(set))
@@ -290,9 +301,9 @@ pub fn any_seq<'input: 'output, 'output, Input: Ord + PrintError>(
 ptest! {
     #[test]
     fn prop_any_seq(mut input: Vec<u8>, mut aux: Vec<u8>) {
-        assert_eq!(input == aux, any_seq(BTreeSet::from_iter([&aux[..]])).parse(&input).is_ok());
+        assert_eq!(input == aux, any_seq(BTreeSet::from_iter([&*aux])).parse(&input).is_ok());
         input.append(&mut aux);
-        assert_eq!(any_seq(BTreeSet::from_iter([&input[..]])).partial(&input).map(|(a, _)| a), Ok(&input[..]));
+        assert_eq!(any_seq(BTreeSet::from_iter([&*input])).partial(&input).map(|(a, _)| a), Ok(&*input));
     }
 }
 
@@ -325,6 +336,8 @@ impl<
     }
 }
 /// Match any of a set of sequences of options. Set represented as a binary tree for efficient lookup.
+#[inline(always)]
+#[must_use]
 pub const fn parse_while<
     'input: 'output,
     'output,
@@ -337,9 +350,10 @@ pub const fn parse_while<
 }
 ptest! {
     #[test]
+    #[allow(clippy::unwrap_used)]
     fn prop_parse_while(input: Vec<u8>, threshold: u8) {
         let prop = move |x: &u8| x < &threshold;
-        let (pass, etc) = parse_while(prop).partial(&input[..]).unwrap();
+        let (pass, etc) = parse_while(prop).partial(&input).unwrap();
         for x in pass {
             assert!(prop(x));
         }
@@ -350,6 +364,8 @@ ptest! {
 }
 
 /// Match zero or more whitespace characters and return a reference to their contiguous slice.
+#[inline(always)]
+#[must_use]
 pub fn whitespace<'input: 'output, 'output>(
 ) -> Parser<'input, 'output, impl Parse<'input, 'output, Input = u8>> {
     parse_while(|c| matches!(c, &b' ' | &b'\t' | &b'\r' | &b'\n'))
@@ -357,6 +373,8 @@ pub fn whitespace<'input: 'output, 'output>(
 // any test would follow tautologically from the definition of `parse_while`
 
 /// Match any lowercase letter and return a reference to it.
+#[inline(always)]
+#[must_use]
 pub fn lowercase<'input: 'output, 'output>(
 ) -> Parser<'input, 'output, impl Parse<'input, 'output, Input = u8, Output = &'output u8>> {
     satisfy(u8::is_ascii_lowercase, |x| {
@@ -375,6 +393,8 @@ ptest! {
 }
 
 /// Match any uppercase letter and return a reference to it.
+#[inline(always)]
+#[must_use]
 pub fn uppercase<'input: 'output, 'output>(
 ) -> Parser<'input, 'output, impl Parse<'input, 'output, Input = u8, Output = &'output u8>> {
     satisfy(u8::is_ascii_uppercase, |x| {
@@ -421,7 +441,9 @@ impl<
         let mut long_term_etc = whitespace().partial(input)?.1;
         while let Ok((out, etc)) = self.0.partial(long_term_etc) {
             results.push(out);
-            long_term_etc = if let Ok((_, the_rest)) = (exact(&b',') << whitespace()).partial(etc) {
+            long_term_etc = if let Ok((_, the_rest)) =
+                (exact(&b',').discard_right(whitespace())).partial(etc)
+            {
                 the_rest
             } else {
                 return Ok((results, etc));
@@ -431,6 +453,8 @@ impl<
     }
 }
 /// Match any of a set of sequences of options. Set represented as a binary tree for efficient lookup.
+#[inline(always)]
+#[must_use]
 pub const fn comma_separated<
     'input,
     'output,
@@ -444,6 +468,8 @@ pub const fn comma_separated<
 // test covered in src/tests.rs
 
 /// Match a `snake_case` term.
+#[inline(always)]
+#[must_use]
 pub fn snake_case<'input: 'output, 'output>(
 ) -> Parser<'input, 'output, impl Parse<'input, 'output, Input = u8, Output = &'output [u8]>> {
     parse_while(|x| {
@@ -455,12 +481,14 @@ pub fn snake_case<'input: 'output, 'output>(
 ptest! {
     #[test]
     fn prop_snake_case(input: Vec<u8>) {
-        let filtered = input.into_iter().filter(|x| matches!(x, (b'a'..=b'z') | b'_')).collect::<Vec<_>>();
-        assert_eq!(snake_case().parse(&filtered), Ok(&filtered[..]));
+        let filtered = input.into_iter().filter(|x| matches!(x, &(b'a'..=b'z') | &b'_')).collect::<Vec<_>>();
+        assert_eq!(snake_case().parse(&filtered), Ok(&*filtered));
     }
 }
 
 /// Match a `SCREAMING_CASE` term.
+#[inline(always)]
+#[must_use]
 pub fn screaming_case<'input: 'output, 'output>(
 ) -> Parser<'input, 'output, impl Parse<'input, 'output, Input = u8, Output = &'output [u8]>> {
     parse_while(|x| {
@@ -472,12 +500,14 @@ pub fn screaming_case<'input: 'output, 'output>(
 ptest! {
     #[test]
     fn prop_screaming_case(input: Vec<u8>) {
-        let filtered = input.into_iter().filter(|x| matches!(x, (b'A'..=b'Z') | b'_')).collect::<Vec<_>>();
-        assert_eq!(screaming_case().parse(&filtered), Ok(&filtered[..]));
+        let filtered = input.into_iter().filter(|x| matches!(x, &(b'A'..=b'Z') | &b'_')).collect::<Vec<_>>();
+        assert_eq!(screaming_case().parse(&filtered), Ok(&*filtered));
     }
 }
 
 /// Match a single digit.
+#[inline(always)]
+#[must_use]
 pub fn digit<'input>(
 ) -> Parser<'input, 'static, impl Parse<'input, 'static, Input = u8, Output = u8>> {
     satisfy(u8::is_ascii_digit, |x| {

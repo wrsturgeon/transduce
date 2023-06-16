@@ -6,6 +6,8 @@
 
 //! Trait for pretty-printing parse errors.
 
+#![allow(clippy::format_push_string)] // FIXME
+
 use alloc::{format, string::String};
 
 /// Pretty-print parse errors.
