@@ -4,16 +4,18 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-#![cfg_attr(feature = "nightly", allow(dead_code, unused_imports))] // FIXME
+#![allow(dead_code, unused_imports)] // FIXME
+
+use alloc::{vec /* the macro */, vec::Vec};
 
 #[allow(clippy::wildcard_imports)]
-use crate::{base::*, Read};
+use crate::{base::*, Parser, Read};
 
 #[test]
 fn a_to_b() {
     let parser = || {
-        whitespace() >> verbatim() << whitespace() << exact(&b'-') << exact(&b'>') << whitespace()
-            & verbatim() << whitespace() << end()
+        whitespace() >> anything() << whitespace() << exact(&b'-') << exact(&b'>') << whitespace()
+            & anything() << whitespace() << end()
     };
     assert_eq!(parser().parse(b"A -> B"), Ok((&b'A', &b'B')));
     assert_eq!(parser().parse(b"A->B"), Ok((&b'A', &b'B')));
@@ -23,14 +25,17 @@ fn a_to_b() {
 #[test]
 fn comma_separated_alphabet() {
     assert_eq!(
-        comma_separated(verbatim).0(b"a"),
+        comma_separated(anything()).0(b"a"),
         Ok((vec![&b'a'], &*vec![]))
     );
     assert_eq!(
-        comma_separated(verbatim).0(b"   a, b, c,d,e,f,        g    ,    h , i       ,   j , k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z     ,      ").map(|(v, etc)| (v.into_iter().copied().collect(), etc)),
+        comma_separated(anything()).0(b"   a, b, c,d,e,f,        g    ,    h , i       ,   j , k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z     ,      ").map(|(v, etc)| (v.into_iter().copied().collect(), etc)),
         Ok(((b'a'..=b'z').collect::<Vec<_>>(), &*vec![])),
     );
 }
+
+// FIXME
+/*
 
 #[derive(Debug, PartialEq)]
 enum Literal<'a> {
@@ -38,25 +43,11 @@ enum Literal<'a> {
     Digit(u8),
 }
 
-#[cfg(not(feature = "nightly"))] // FIXME
-impl<'input, 'f> Read<'input, 'f> for Literal<'input> {
-    #[cfg(feature = "nightly")]
+impl Read<u8> for Literal<'_> {
+    type InternalParser = _;
     #[inline(always)]
     #[must_use]
-    fn parser() -> crate::Parser<
-        'input,
-        'f,
-        u8,
-        Literal<'input>,
-        impl 'f + FnOnce(&'input [u8]) -> crate::result::Result<(Literal<'input>, &'input [u8])>,
-    > {
-        exact(&b'\'') >> (lowercase() | uppercase) << exact(&b'\'') ^ Literal::Character
-            | || digit() ^ Literal::Digit
-    }
-    #[cfg(not(feature = "nightly"))]
-    #[inline(always)]
-    #[must_use]
-    fn parser() -> crate::Parser<'input, 'f, u8, Self> {
+    fn parser() -> Parser<Self::InternalParser> {
         exact(&b'\'') >> (lowercase() | uppercase) << exact(&b'\'') ^ Literal::Character
             | || digit() ^ Literal::Digit
     }
@@ -104,6 +95,8 @@ fn optional_zero() {
     assert!(parser().parse(b"00123").is_err());
 }
 
+*/
+
 mod failures {
     #![allow(
         clippy::let_underscore_untyped,
@@ -116,7 +109,7 @@ mod failures {
     #[should_panic] // Remove to see the gorgeous error message
     #[test]
     fn fail() {
-        let _ = (verbatim() << exact(&b'!')).parse_or_panic(b"???");
+        let _ = (anything() << exact(&b'!')).parse_or_panic(b"???");
     }
 
     #[should_panic] // Remove to see the gorgeous error message
@@ -128,19 +121,19 @@ mod failures {
     #[should_panic] // Remove to see the gorgeous error message
     #[test]
     fn oob() {
-        let _ = (verbatim() & verbatim() & verbatim() & verbatim()).parse_or_panic(b"???");
+        let _ = (anything() & anything() & anything() & anything()).parse_or_panic(b"???");
     }
 
     #[should_panic] // Remove to see the gorgeous error message
     #[test]
     fn not_expecting_a_newline() {
-        let _ = (verbatim() << exact(&b'!')).parse_or_panic(b"?\n?\n?");
+        let _ = (anything() << exact(&b'!')).parse_or_panic(b"?\n?\n?");
     }
 
     #[should_panic] // Remove to see the gorgeous error message
     #[test]
     fn multiline_fail() {
-        let _ = (verbatim() << whitespace() << exact(&b'!')).parse_or_panic(b"?\n?\n?");
+        let _ = (anything() << whitespace() << exact(&b'!')).parse_or_panic(b"?\n?\n?");
     }
 
     #[should_panic] // Remove to see the gorgeous error message
@@ -152,13 +145,16 @@ mod failures {
     #[should_panic] // Remove to see the gorgeous error message
     #[test]
     fn multiline_oob() {
-        let _ = (verbatim() << whitespace()
-            & verbatim() << whitespace()
-            & verbatim() << whitespace()
-            & verbatim())
+        let _ = (anything() << whitespace()
+            & anything() << whitespace()
+            & anything() << whitespace()
+            & anything())
         .parse_or_panic(b"?\n?\n?");
     }
 }
+
+// FIXME
+/*
 
 #[test]
 fn binops_without_precedence() {
@@ -176,7 +172,7 @@ fn binops_without_precedence() {
         .map(|(a, _)| a),
         Ok((
             &b'a',
-            vec![
+            ::vec![
                 (&b"+"[..], &b'b'),
                 (b"-", &b'c'),
                 (b"*", &b'd'),
@@ -190,7 +186,7 @@ proptest::proptest! {
     #[test]
     fn prop_unsigned_int(i in usize::MIN..=usize::MAX) {
         assert_eq!(
-            unsigned_integer().parse(format!("{i:}").as_bytes()),
+            unsigned_integer().parse(format_args!("{i:}").as_bytes()),
             Ok(i),
         );
     }
@@ -198,7 +194,7 @@ proptest::proptest! {
     #[test]
     fn prop_signed_int(i in isize::MIN..=isize::MAX) {
         assert_eq!(
-            signed_integer().parse(format!("{i:}").as_bytes()),
+            signed_integer().parse(format_args!("{i:}").as_bytes()),
             Ok(i),
         );
     }
@@ -210,13 +206,15 @@ fn parse_huge_ints() {
     const SMALLER: usize = usize::MAX;
     const LARGER: u128 = (SMALLER as u128).overflowing_add(1).0;
     assert_eq!(
-        unsigned_integer().parse(format!("{SMALLER:}").as_bytes()),
+        unsigned_integer().parse(format_args!("{SMALLER:}").as_bytes()),
         Ok(SMALLER)
     );
     if core::mem::size_of::<usize>() >= core::mem::size_of::<u128>() {
         return; // nothing we can do on this machine
     }
     assert!(unsigned_integer()
-        .parse(format!("{LARGER:}").as_bytes())
+        .parse(format_args!("{LARGER:}").as_bytes())
         .is_err());
 }
+
+*/

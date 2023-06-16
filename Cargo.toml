@@ -1,9 +1,9 @@
 [package]
 name = "transduce"
-version = "0.2.1"
+version = "0.3.0"
 authors = ["Will Sturgeon <willstrgn@gmail.com>"]
 edition = "2021"
-description = "Isomorphic parsing: your code should look like what it parses."
+description = "Zero-copy isomorphic parsing: your code should look like what it parses."
 license = "MPL-2.0"
 repository = "https://github.com/wrsturgeon/transduce"
 readme = "README.md"
@@ -12,11 +12,7 @@ categories = ["parsing", "mathematics", "encoding", "compilers", "data-structure
 build = "build.rs"
 
 [dependencies]
-rsmonad = ">=0.2"
+# none
 
 [dev-dependencies]
 proptest = ">=1.2.0"
-
-[features]
-# default = ["nightly"]
-nightly = []

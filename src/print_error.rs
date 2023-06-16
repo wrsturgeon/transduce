@@ -6,6 +6,8 @@
 
 //! Trait for pretty-printing parse errors.
 
+use alloc::{format, string::String};
+
 /// Pretty-print parse errors.
 pub trait PrintError: Sized + ::core::fmt::Debug {
     /// Print a parsing error in its context.
@@ -52,15 +54,14 @@ impl PrintError for u8 {
             2,
             match usize::try_from(nline.checked_ilog10().unwrap_or(0)) {
                 Err(err) => {
-                    return "Number of digits did not fit in a `usize`: ".to_owned()
-                        + err.to_string().as_str()
+                    return format!("Number of digits did not fit in a Rust `usize`: {err:}")
                 }
                 Ok(ok) => ok,
             }
             .saturating_add(1),
         );
 
-        let mut out = "\r\n".to_owned();
+        let mut out = String::from("\r\n");
 
         // Header line:
         for _ in 0..ndigit.saturating_sub(2) {
@@ -77,15 +78,10 @@ impl PrintError for u8 {
         let line_end = next_newline(&buffer[index..]).map(|x| index.saturating_add(x));
         let line_begin = last_newline(&buffer[..index]);
         let begin = line_begin.map_or(0, |begin| {
-            out.push_str(
-                nline
-                    .checked_sub(1)
-                    .map_or_else(
-                        || format!("{:>ndigit$} | ", '?'),
-                        |line| format!("{line:>ndigit$} | "),
-                    )
-                    .as_str(),
-            );
+            out.push_str(&nline.checked_sub(1).map_or_else(
+                || format!("{:>ndigit$} | ", '?'),
+                |line| format!("{line:>ndigit$} | "),
+            ));
             out.push_str(
                 core::str::from_utf8(
                     &buffer
@@ -96,11 +92,14 @@ impl PrintError for u8 {
             out.push_str("\r\n");
             begin
         });
-        out.push_str(format!("{nline:>ndigit$} | ").as_str());
-        out.push_str(
-            core::str::from_utf8(&buffer[begin.saturating_add(1)..index])
-                .unwrap_or("[Input to parse was not valid UTF-8 and thus can't be displayed]"),
-        );
+        out.push_str(&format!("{nline:>ndigit$} | "));
+        let second = begin.saturating_add(1);
+        if second < index {
+            out.push_str(
+                core::str::from_utf8(&buffer[second..index])
+                    .unwrap_or("[Input to parse was not valid UTF-8 and thus can't be displayed]"),
+            );
+        }
         out.push_str("\x1B[0;1;41m");
         if out_of_bounds {
             out.push(' ');
@@ -111,7 +110,7 @@ impl PrintError for u8 {
                 b'\n' => out.push_str("[newline]"),
                 b'\r' => out.push_str("[carriage return, probably a newline]"),
                 b'\t' => out.push_str("[tab]"),
-                hex => out.push_str(format!("[raw ASCII character #{hex:}]").as_str()),
+                hex => out.push_str(&format!("[raw ASCII character #{hex:}]")),
             }
             out.push_str("\x1B[0m");
             let next = index.saturating_add(1);
@@ -140,15 +139,10 @@ impl PrintError for u8 {
 
         // Next line, if any
         if let Some(end) = line_end {
-            out.push_str(
-                nline
-                    .checked_add(1)
-                    .map_or_else(
-                        || format!("{:>ndigit$} | ", '?'),
-                        |line| format!("{line:>ndigit$} | "),
-                    )
-                    .as_str(),
-            );
+            out.push_str(&nline.checked_add(1).map_or_else(
+                || format!("{:>ndigit$} | ", '?'),
+                |line| format!("{line:>ndigit$} | "),
+            ));
             let next_end = next_newline(&buffer[end.saturating_add(1)..])
                 .map_or(len, |x| x.saturating_add(end.saturating_add(1)));
             out.push_str(
