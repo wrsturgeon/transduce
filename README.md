@@ -51,6 +51,13 @@ The `parse` method automatically locates the error (even for user-defined parser
    |  ^ Expected 33 but found 63
 ```
 
+### `no_std`
+
+The crate is entirely `no_std`; a `std` version isn't even necessary.
+
+Furthermore, the `alloc` feature (enabled by default) can be disabled; this entire crate works without heap allocation.
+However, some parsers in `base` (those involving vectors whose length is unknown at compile time, e.g. `comma_separated`) will be unavailable.
+
 ### Thanks
 
 Huge shoutout to UPenn's CIS 194 and Haskell's higher-order parsing libraries I learned in 194.

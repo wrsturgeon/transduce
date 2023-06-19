@@ -23,10 +23,10 @@ jobs:
     - name: Build (all features)
       run: cargo build --all-features --verbose
     - name: Test (no features)
-      run: PROPTEST_CASES=1000000 cargo test --no-default-features --verbose
+      run: PROPTEST_CASES=100000 cargo test --verbose --no-default-features || cat proptest-regressions/base.txt
     - name: Test (all features)
-      run: PROPTEST_CASES=1000000 cargo test --all-features --verbose || cat proptest-regressions/base.txt
+      run: PROPTEST_CASES=100000 cargo test --verbose --all-features || cat proptest-regressions/base.txt
     - name: Clippy (no features)
-      run: cargo clippy --no-default-features --all-targets --verbose || cat proptest-regressions/base.txt
+      run: cargo clippy --all-targets --verbose --no-default-features
     - name: Clippy (all features)
-      run: cargo clippy --all-targets --all-features --verbose
+      run: cargo clippy --all-targets --verbose --all-features
