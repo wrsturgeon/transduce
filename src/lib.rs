@@ -39,7 +39,6 @@
     box_pointers,
     elided_lifetimes_in_paths,
     explicit_outlives_requirements,
-    ffi_unwind_calls,
     keyword_idents,
     let_underscore_drop,
     macro_use_extern_crate,
