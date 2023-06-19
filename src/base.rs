@@ -9,8 +9,21 @@
 #![allow(clippy::tests_outside_test_module, clippy::wildcard_imports)]
 
 use crate::{print_error::PrintError, *};
-use alloc::{collections::BTreeSet, format, string::String, vec /* the macro */, vec::Vec};
 use core::marker::PhantomData;
+
+#[cfg(any(feature = "alloc", test))]
+#[cfg_attr(test, allow(unused_imports))]
+use alloc::{format, string::String, vec /* the macro */, vec::Vec};
+
+/// Representation of a set. O(lg n)-search BST when allocation is available, otherwise an O(n) slice.
+#[cfg(feature = "alloc")]
+#[allow(clippy::single_char_lifetime_names)]
+type Set<'a, T> = alloc::collections::BTreeSet<T>;
+
+/// Representation of a set. O(lg n)-search BST when allocation is available, otherwise an O(n) slice.
+#[cfg(not(feature = "alloc"))]
+#[allow(clippy::single_char_lifetime_names)]
+type Set<'a, T> = &'a [T];
 
 /// Property test active only when testing (not in debug or release builds).
 macro_rules! ptest {
@@ -20,11 +33,23 @@ macro_rules! ptest {
     };
 }
 
+#[cfg(feature = "alloc")]
 /// End-of-input error: expected an item but none remaining.
 macro_rules! end_of_input {
     () => {
         return Err(ParseError {
             message: String::from("Reached end of input but expected an item"),
+            not_yet_parsed: None,
+        })
+    };
+}
+
+#[cfg(not(feature = "alloc"))]
+/// End-of-input error: expected an item but none remaining.
+macro_rules! end_of_input {
+    () => {
+        return Err(ParseError {
+            message: "Reached end of input but expected an item",
             not_yet_parsed: None,
         })
     };
@@ -38,7 +63,7 @@ pub fn not<
     'input,
     Input: 'input + PrintError,
     Predicate: Fn(&'input Input) -> bool,
-    WriteMessage: Fn(&'input Input) -> String,
+    WriteMessage: Fn(&'input Input) -> Message,
 >(
     predicate: Predicate,
     msg: WriteMessage,
@@ -50,7 +75,7 @@ ptest! {
     fn prop_not(input: u8, threshold: u8) {
         let pred = move |x: &u8| x < &threshold;
         let slice = &[input];
-        assert_eq!(pred(&input), not(pred, |_| String::new()).parse(slice).is_err());
+        assert_eq!(pred(&input), not(pred, |_| string_if_alloc("")).parse(slice).is_err());
     }
 }
 
@@ -99,6 +124,7 @@ impl<'input, Input: 'input + PrintError> Parse<'input> for End<Input> {
         if !input.is_empty() {
             bail!(
                 "Expected the end of the input stream but found input remaining",
+                "Expected the end of the input stream but found input remaining",
                 input,
             )
         }
@@ -126,7 +152,7 @@ pub fn satisfy<
     'input,
     Input: 'input + PrintError,
     Predicate: Fn(&'input Input) -> bool,
-    WriteMessage: Fn(&'input Input) -> String,
+    WriteMessage: Fn(&'input Input) -> Message,
 >(
     predicate: Predicate,
     msg: WriteMessage,
@@ -138,7 +164,7 @@ ptest! {
     fn prop_satisfy(input: u8, threshold: u8) {
         let pred = move |x: &u8| x < &threshold;
         let slice = &[input];
-        assert_eq!(pred(&input), satisfy(pred, |_| String::new()).parse(slice).is_ok());
+        assert_eq!(pred(&input), satisfy(pred, |_| string_if_alloc("")).parse(slice).is_ok());
     }
 }
 
@@ -149,7 +175,7 @@ ptest! {
 pub fn satisfy_result<
     'input,
     Input: 'input + PrintError,
-    Predicate: Fn(&'input Input) -> Result<(), String>,
+    Predicate: Fn(&'input Input) -> Result<(), Message>,
 >(
     predicate: Predicate,
 ) -> Parser<'input, impl Parse<'input, Input = Input, Output = &'input Input>> {
@@ -160,7 +186,7 @@ ptest! {
     fn prop_satisfy_result(input: u8, threshold: u8) {
         let pred = move |x: &u8| x < &threshold;
         let slice = &[input];
-        assert_eq!(pred(&input), satisfy_result(move |x| if pred(x) { Ok(()) } else { Err(String::new()) }).parse(slice).is_ok());
+        assert_eq!(pred(&input), satisfy_result(move |x| if pred(x) { Ok(()) } else { Err(string_if_alloc("")) }).parse(slice).is_ok());
     }
 }
 
@@ -171,9 +197,15 @@ ptest! {
 pub fn exact<Input: PartialEq<Input> + PrintError>(
     reference: &'_ Input,
 ) -> Parser<'_, impl Parse<'_, Input = Input, Output = &'_ Input>> {
+    #![cfg_attr(not(feature = "alloc"), allow(unused_variables))]
     satisfy(
         move |x| reference.eq(x),
-        move |head| format!("Expected {reference:#?} but found {head:#?}"),
+        move |head| {
+            format_if_alloc!(
+                "Expected one exact item but found another",
+                "Expected {reference:#?} but found {head:#?}"
+            )
+        },
     )
 }
 ptest! {
@@ -197,6 +229,7 @@ impl<'input, Input: 'input + PartialEq + PrintError> Parse<'input> for ExactSeq<
         &self,
         input: &'input [Self::Input],
     ) -> Result<(Self::Output, &'input [Self::Input]), ParseError> {
+        #![cfg_attr(not(feature = "alloc"), allow(unused_variables))]
         let mut etc = input;
         for i in self.0 {
             match etc.split_first() {
@@ -206,6 +239,7 @@ impl<'input, Input: 'input + PartialEq + PrintError> Parse<'input> for ExactSeq<
                         let e = self.0;
                         bail!(
                             "Expected {e:#?} but found {head:#?} instead of {i:#?}",
+                            "Expected one character but found another",
                             tail
                         )
                     }
@@ -236,27 +270,36 @@ ptest! {
 #[inline(always)]
 #[must_use]
 pub fn any<'input, Input: 'input + Ord + PrintError>(
-    set: BTreeSet<Input>,
+    set: Set<'input, Input>,
 ) -> Parser<'input, impl Parse<'input, Input = Input, Output = &'input Input>> {
     satisfy_result(move |x| {
         if set.contains(x) {
             Ok(())
         } else {
-            Err(format!("Expected an element of {set:#?} but found {x:#?}"))
+            Err(format_if_alloc!(
+                "Expected one of a set of single items but the actual item was not one of them",
+                "Expected an element of {set:#?} but found {x:#?}"
+            ))
         }
     })
 }
 ptest! {
     #[test]
-    fn prop_any(input: u8, set: BTreeSet<u8>) {
+    fn prop_any(input: u8, set: alloc::collections::BTreeSet<u8>) {
         let slice = &[input];
+        #[cfg(feature="alloc")]
         assert_eq!(set.contains(&input), any(set).parse(slice).is_ok());
+        #[cfg(not(feature="alloc"))]
+        {
+            let flat: Vec<_> = set.iter().copied().collect();
+            assert_eq!(set.contains(&input), any(&flat).parse(slice).is_ok());
+        }
     }
 }
 
 /// Match any of a set of sequences of options. Set represented as a binary tree for efficient lookup.
 #[derive(Debug)]
-pub struct AnySeq<'platonic, Input: Ord + PrintError>(BTreeSet<&'platonic [Input]>); // TODO: reference the btree
+pub struct AnySeq<'platonic, Input: Ord + PrintError>(Set<'platonic, &'platonic [Input]>); // TODO: reference the btree
 impl<'input, Input: 'input + Ord + PrintError> Parse<'input> for AnySeq<'_, Input> {
     type Input = Input;
     type Output = &'input [Input];
@@ -265,13 +308,23 @@ impl<'input, Input: 'input + Ord + PrintError> Parse<'input> for AnySeq<'_, Inpu
         &self,
         input: &'input [Self::Input],
     ) -> Result<(Self::Output, &'input [Self::Input]), ParseError> {
+        #![cfg_attr(not(feature = "alloc"), allow(unused_variables))]
         let Some((head, _)) = input.split_first() else {
-            if self.0.contains(input/* [] */) {
+            if self.0.contains(&input/* [] */) {
                 return Ok((input, input));
             }
             end_of_input!()
         };
+        // With `alloc`, O(lg n)
+        #[cfg(feature = "alloc")]
         for &option in self.0.range(core::slice::from_ref(head)..=input) {
+            if let Ok((parsed, etc)) = exact_seq(option).partial(input) {
+                return Ok((parsed, etc));
+            }
+        }
+        // Without, O(n)
+        #[cfg(not(feature = "alloc"))]
+        for &option in self.0 {
             if let Ok((parsed, etc)) = exact_seq(option).partial(input) {
                 return Ok((parsed, etc));
             }
@@ -279,7 +332,11 @@ impl<'input, Input: 'input + Ord + PrintError> Parse<'input> for AnySeq<'_, Inpu
         match input.split_first() {
             Some((_, tail)) => {
                 let e = &self.0;
-                bail!("Expected one of {e:#?}", tail)
+                bail!(
+                    "Expected one of {e:#?}",
+                    "Expected a sequence of characters but found another",
+                    tail
+                )
             }
             None => end_of_input!(),
         }
@@ -289,16 +346,22 @@ impl<'input, Input: 'input + Ord + PrintError> Parse<'input> for AnySeq<'_, Inpu
 #[inline(always)]
 #[must_use]
 pub const fn any_seq<'platonic, 'input, Input: 'input + Ord + PrintError>(
-    set: BTreeSet<&'platonic [Input]>,
+    set: Set<'platonic, &'platonic [Input]>,
 ) -> Parser<'input, AnySeq<'platonic, Input>> {
     Parser::new(AnySeq(set))
 }
 ptest! {
     #[test]
     fn prop_any_seq(mut input: Vec<u8>, mut aux: Vec<u8>) {
-        assert_eq!(input == aux, any_seq(BTreeSet::from_iter([&*aux])).parse(&input).is_ok());
+        #[cfg(feature = "alloc")]
+        assert_eq!(input == aux, any_seq(Set::from_iter([&*aux])).parse(&input).is_ok());
+        #[cfg(not(feature = "alloc"))]
+        assert_eq!(input == aux, any_seq(&[&aux]).parse(&input).is_ok());
         input.append(&mut aux);
-        assert_eq!(any_seq(BTreeSet::from_iter([&*input])).partial(&input).map(|(a, _)| a), Ok(&*input));
+        #[cfg(feature = "alloc")]
+        assert_eq!(any_seq(Set::from_iter([&*input])).partial(&input).map(|(a, _)| a), Ok(&*input));
+        #[cfg(not(feature = "alloc"))]
+        assert_eq!(any_seq(&[&input]).partial(&input).map(|(a, _)| a), Ok(&*input));
     }
 }
 
@@ -388,9 +451,12 @@ ptest! {
     }
 }
 
+// TODO: enable without `alloc` with a maximum length
+#[cfg(feature = "alloc")]
 /// Continue parsing as long as we can. Return a contiguous slice referencing the section of input that successfully parsed.
 #[derive(Debug)]
 pub struct Runaway<'input, Each: Parse<'input>>(Parser<'input, Each>);
+#[cfg(feature = "alloc")]
 impl<'input, Each: Parse<'input>> Parse<'input> for Runaway<'input, Each> {
     type Input = Each::Input;
     type Output = Vec<Each::Output>;
@@ -408,6 +474,7 @@ impl<'input, Each: Parse<'input>> Parse<'input> for Runaway<'input, Each> {
         Ok((results, remaining))
     }
 }
+#[cfg(feature = "alloc")]
 /// Match any of a set of sequences of options. Set represented as a binary tree for efficient lookup.
 #[inline(always)]
 #[must_use]
@@ -416,6 +483,7 @@ pub const fn runaway<'input, Each: Parse<'input>>(
 ) -> Parser<'input, Runaway<'input, Each>> {
     Parser::new(Runaway(each))
 }
+#[cfg(feature = "alloc")]
 ptest! {
     #[test]
     #[allow(clippy::unwrap_used)]
@@ -442,8 +510,10 @@ pub fn whitespace<'input>() -> Parser<'input, impl Parse<'input, Input = u8>> {
 #[inline(always)]
 #[must_use]
 pub fn lowercase<'input>() -> Parser<'input, impl Parse<'input, Input = u8, Output = &'input u8>> {
+    #![cfg_attr(not(feature = "alloc"), allow(unused_variables))]
     satisfy(u8::is_ascii_lowercase, |x| {
-        format!(
+        format_if_alloc!(
+            "Expected a lowercase letter",
             "Expected a lowercase letter but found '{:}'",
             char::from(*x)
         )
@@ -461,8 +531,10 @@ ptest! {
 #[inline(always)]
 #[must_use]
 pub fn uppercase<'input>() -> Parser<'input, impl Parse<'input, Input = u8, Output = &'input u8>> {
+    #![cfg_attr(not(feature = "alloc"), allow(unused_variables))]
     satisfy(u8::is_ascii_uppercase, |x| {
-        format!(
+        format_if_alloc!(
+            "Expected an uppercase letter",
             "Expected an uppercase letter but found '{:}'",
             char::from(*x)
         )
@@ -476,6 +548,7 @@ ptest! {
     }
 }
 
+#[cfg(feature = "alloc")]
 /// Parse a punctuated (e.g. comma-separated) list of elements determined by the parsers passed in here.
 #[derive(Debug)]
 pub struct Punctuated<'input, Element: Parse<'input>, Punct: Parse<'input, Input = Element::Input>>
@@ -487,6 +560,7 @@ pub struct Punctuated<'input, Element: Parse<'input>, Punct: Parse<'input, Input
     /// Whether to allow trailing punctuation, e.g. `a, b, c,` instead of only `a, b, c`.
     allow_trailing: bool,
 }
+#[cfg(feature = "alloc")]
 impl<'input, Element: Parse<'input>, Punct: Parse<'input, Input = Element::Input>> Parse<'input>
     for Punctuated<'input, Element, Punct>
 {
@@ -515,6 +589,7 @@ impl<'input, Element: Parse<'input>, Punct: Parse<'input, Input = Element::Input
         Ok((results, remaining))
     }
 }
+#[cfg(feature = "alloc")]
 /// Match any of a set of sequences of options. Set represented as a binary tree for efficient lookup.
 #[inline(always)]
 #[must_use]
@@ -534,7 +609,7 @@ pub const fn punctuated<
     })
 }
 
-// test covered in src/tests.rs
+#[cfg(feature = "alloc")]
 /// Match any of a set of sequences of options. Set represented as a binary tree for efficient lookup.
 #[inline(always)]
 #[must_use]
@@ -562,6 +637,7 @@ pub fn comma_separated<'input, Element: Parse<'input, Input = u8>>(
         )
 }
 
+#[cfg(feature = "alloc")]
 /// Parse a punctuated (e.g. by mathematical operators) list of elements determined by the parsers passed in here.
 #[derive(Debug)]
 pub struct PunctuatedMeaningfully<
@@ -576,6 +652,7 @@ pub struct PunctuatedMeaningfully<
     /// Whether to allow trailing punctuation, e.g. `a, b, c,` instead of only `a, b, c`.
     allow_trailing: bool,
 }
+#[cfg(feature = "alloc")]
 impl<'input, Element: Parse<'input>, Punct: Parse<'input, Input = Element::Input>> Parse<'input>
     for PunctuatedMeaningfully<'input, Element, Punct>
 {
@@ -604,6 +681,7 @@ impl<'input, Element: Parse<'input>, Punct: Parse<'input, Input = Element::Input
         Ok(((head, tail), remaining))
     }
 }
+#[cfg(feature = "alloc")]
 /// Match any of a set of sequences of options. Set represented as a binary tree for efficient lookup.
 #[inline(always)]
 #[must_use]
@@ -665,15 +743,19 @@ ptest! {
 #[inline(always)]
 #[must_use]
 pub fn digit<'input>() -> Parser<'input, impl Parse<'input, Input = u8, Output = u8>> {
+    #![cfg_attr(not(feature = "alloc"), allow(unused_variables))]
     satisfy(u8::is_ascii_digit, |x| {
-        format!(
+        format_if_alloc!(
+            "Expected an uppercase letter",
             "Expected an uppercase letter but found '{:}' (ASCII #{x:})",
             char::from(*x)
         )
     })
     .pipe(|x| {
+        #[allow(clippy::unnecessary_lazy_evaluations)]
         x.checked_sub(b'0').ok_or_else(|| {
-            format!(
+            format_if_alloc!(
+                "Found an ASCII digit but couldn't subtract 0 from it",
                 "Found an ASCII digit but couldn't subtract '0' from it. Digit was '{:}' (ASCII #{x:}).",
                 char::from(*x)
             )
@@ -681,6 +763,7 @@ pub fn digit<'input>() -> Parser<'input, impl Parse<'input, Input = u8, Output =
     })
 }
 
+#[cfg(feature = "alloc")]
 /// Match a base-ten unsigned integer.
 #[inline(always)]
 #[must_use]
@@ -691,7 +774,7 @@ pub fn unsigned_integer<'input>() -> Parser<'input, impl Parse<'input, Input = u
             acc.map_or_else(Err, |x: usize| {
                 match x.checked_mul(10).map(|x0| x0.checked_add(digit.into())) {
                     Some(Some(y)) => Ok(y),
-                    _ => Err(String::from(
+                    _ => Err(string_if_alloc(
                         "Parsing error: parsed integer that would overflow a Rust `usize`",
                     )),
                 }
@@ -700,6 +783,7 @@ pub fn unsigned_integer<'input>() -> Parser<'input, impl Parse<'input, Input = u
     })
 }
 
+#[cfg(feature = "alloc")]
 /// Match a base-ten signed integer.
 #[inline(always)]
 #[must_use]
@@ -730,6 +814,7 @@ pub fn signed_integer<'input>() -> Parser<'input, impl Parse<'input, Input = u8,
     })
 }
 
+#[cfg(feature = "alloc")]
 /// Operator-precedence parsing, e.g. for infix math.
 pub mod precedence {
     #[allow(clippy::wildcard_imports)]
@@ -740,7 +825,7 @@ pub mod precedence {
     #[must_use]
     pub fn raw_binary_ops<'platonic, 'input, Primary: Parse<'input, Input = u8>>(
         primary: Parser<'input, Primary>,
-        ops: BTreeSet<&'platonic [u8]>,
+        ops: Set<'platonic, &'platonic [u8]>,
     ) -> Parser<
         'input,
         PunctuatedMeaningfully<

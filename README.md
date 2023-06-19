@@ -51,12 +51,12 @@ The `parse` method automatically locates the error (even for user-defined parser
    |  ^ Expected 33 but found 63
 ```
 
-### `no_std`
+### Dependencies & `no_std`
 
-The crate is entirely `no_std`; a `std` version isn't even necessary.
+This crate has no dependencies. It's also entirely `no_std`; a `std` version isn't even necessary.
 
-Furthermore, the `alloc` feature (enabled by default) can be disabled; this entire crate works without heap allocation.
-However, some parsers in `base` (those involving vectors whose length is unknown at compile time, e.g. `comma_separated`) will be unavailable.
+If (for some reason?) you want to run this on a microcontroller or just without heap allocation, the `alloc` feature can be disabled.
+The entire core still works, but a few parsers in `base` (those involving vectors whose length is unknown at compile time, e.g. `comma_separated`) will be unavailable.
 
 ### Thanks
 

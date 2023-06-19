@@ -81,11 +81,7 @@
     clippy::separated_literal_suffix
 )]
 
-use core::marker::PhantomData;
-
-use alloc::string::String;
-
-// #[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", test))]
 extern crate alloc;
 
 pub mod base;
@@ -94,25 +90,84 @@ pub mod print_error;
 #[cfg(test)]
 mod test;
 
+use core::marker::PhantomData;
+
+#[cfg(feature = "alloc")]
+use alloc::string::String;
+
+/// Heap-allocated when available; predetermined otherwise.
+#[cfg(feature = "alloc")]
+type Message = String;
+
+/// Heap-allocated when available; predetermined otherwise.
+#[cfg(not(feature = "alloc"))]
+type Message = &'static str;
+
 /// Parsing error: both a message and where it was, via accepting the length of input _after_ the error.
-#[allow(clippy::exhaustive_structs)]
+#[allow(clippy::exhaustive_structs, missing_copy_implementations)]
 #[derive(Debug, Eq, PartialEq)]
 pub struct ParseError {
     /// Message helpfully describing this error.
-    pub message: String,
+    pub message: Message,
     /// Length of input _after_ this error, or `None` if we ran out of input (would be -1).
     pub not_yet_parsed: Option<usize>,
 }
 
+#[cfg(feature = "alloc")]
 /// Immediately return with an error. The second argument requests the slice of input _after_ this error, so we can deduce where it happened.
 #[macro_export]
 macro_rules! bail {
-    ($fmsg:expr, $not_yet_parsed:expr $(,)?) => {
+    ($formatted_msg:expr, $plain_msg:expr, $not_yet_parsed:expr $(,)?) => {
         return Err(ParseError {
-            message: ::alloc::format!($fmsg),
+            message: ::alloc::format!($formatted_msg),
             not_yet_parsed: Some($not_yet_parsed.len()),
         })
     };
+}
+
+#[cfg(not(feature = "alloc"))]
+/// Immediately return with an error. The second argument requests the slice of input _after_ this error, so we can deduce where it happened.
+#[macro_export]
+macro_rules! bail {
+    ($formatted_msg:expr, $plain_msg:expr, $not_yet_parsed:expr $(,)?) => {
+        return Err(ParseError {
+            message: concat!(
+                $plain_msg,
+                " (specifics unavailable without the `alloc` feature)"
+            ),
+            not_yet_parsed: Some($not_yet_parsed.len()),
+        })
+    };
+}
+
+#[cfg(feature = "alloc")]
+/// Heap-allocated custom formatting if `alloc` is enabled; otherwise, use the first, non-heap argument.
+#[macro_export]
+macro_rules! format_if_alloc {
+    ($default:expr, $fmt:tt$(, $($arg:expr),+)?) => {
+        format!($fmt$(, $($arg),+)?)
+    };
+}
+
+#[cfg(not(feature = "alloc"))]
+/// Heap-allocated custom formatting if `alloc` is enabled; otherwise, use the first, non-heap argument.
+#[macro_export]
+macro_rules! format_if_alloc {
+    ($default:expr, $fmt:tt$(, $($arg:expr),+)?) => {
+        $default
+    };
+}
+
+#[cfg(feature = "alloc")]
+/// Heap-allocated string if `alloc` enabled; otherwise, pointer to compile-time memory.
+fn string_if_alloc(s: &'static str) -> Message {
+    String::from(s)
+}
+
+#[cfg(not(feature = "alloc"))]
+/// Heap-allocated string if `alloc` enabled; otherwise, pointer to compile-time memory.
+const fn string_if_alloc(s: &'static str) -> Message {
+    s
 }
 
 /// Parse a slice of `Input`s into an `Output`.
@@ -146,7 +201,7 @@ impl<'input, Inside: Parse<'input>> Parser<'input, Inside> {
     /// # Errors
     /// If parsing fails, if we run out of input, or if we have leftover input afterward.
     #[inline(always)]
-    pub fn parse(&self, input: &'input [Inside::Input]) -> Result<Inside::Output, String> {
+    pub fn parse(&self, input: &'input [Inside::Input]) -> Result<Inside::Output, Message> {
         let (parsed, etc) = match self.partial(input) {
             Ok(ok) => ok,
             Err(err) => {
@@ -156,7 +211,7 @@ impl<'input, Inside: Parse<'input>> Parser<'input, Inside> {
                     if let Some(i) = err.not_yet_parsed {
                         match input.len().checked_sub(i) {
                             s @ Some(_) => s,
-                            None => return Err(String::from("Internal parsing error: `parse` received an `etc` greater than the slice itself")),
+                            None => return Err(string_if_alloc("Internal parsing error: `parse` received an `etc` greater than the slice itself")),
                         }
                     } else {
                         None
@@ -168,11 +223,11 @@ impl<'input, Inside: Parse<'input>> Parser<'input, Inside> {
             Ok(parsed)
         } else {
             Err(<Inside::Input as print_error::PrintError>::pretty_error(
-                String::from("Unparsed input remains after parsing what should have been everything"),
+                string_if_alloc("Unparsed input remains after parsing what should have been everything"),
                 input,
                 match input.len().checked_sub(etc.len()){
                     s @ Some(_) => s,
-                    None => return Err(String::from("Internal parsing error: `parse` received an `etc` greater than the slice itself")),
+                    None => return Err(string_if_alloc("Internal parsing error: `parse` received an `etc` greater than the slice itself")),
                 },
             ))
         }
@@ -231,7 +286,7 @@ impl<'input, Inside: Parse<'input>> Parser<'input, Inside> {
     /// Consume this parser and integrate it into a two-part parser that pipes parsed output into a normal function and returns its output.
     #[inline(always)]
     #[must_use]
-    pub const fn pipe<FinalOutput, Right: Fn(Inside::Output) -> Result<FinalOutput, String>>(
+    pub const fn pipe<FinalOutput, Right: Fn(Inside::Output) -> Result<FinalOutput, Message>>(
         self,
         right: Right,
     ) -> Parser<'input, Pipe<'input, Inside, FinalOutput, Right>> {
@@ -425,13 +480,13 @@ pub struct Pipe<
     'input,
     Left: Parse<'input>,
     FinalOutput,
-    Right: Fn(Left::Output) -> Result<FinalOutput, String>,
+    Right: Fn(Left::Output) -> Result<FinalOutput, Message>,
 >(Parser<'input, Left>, Right);
 impl<
         'input,
         Left: Parse<'input>,
         FinalOutput,
-        Right: Fn(Left::Output) -> Result<FinalOutput, String>,
+        Right: Fn(Left::Output) -> Result<FinalOutput, Message>,
     > Pipe<'input, Left, FinalOutput, Right>
 {
     /// Create an instance without worrying about workarounds like `PhantomData`.
@@ -444,7 +499,7 @@ impl<
         'input,
         Left: Parse<'input>,
         FinalOutput,
-        Right: Fn(Left::Output) -> Result<FinalOutput, String>,
+        Right: Fn(Left::Output) -> Result<FinalOutput, Message>,
     > Parse<'input> for Pipe<'input, Left, FinalOutput, Right>
 {
     type Input = Left::Input;
@@ -465,7 +520,7 @@ impl<
         'input,
         Left: Parse<'input>,
         FinalOutput,
-        Right: Fn(Left::Output) -> Result<FinalOutput, String>,
+        Right: Fn(Left::Output) -> Result<FinalOutput, Message>,
     > ::core::ops::BitXor<Right> for Parser<'input, Left>
 {
     type Output = Parser<'input, Pipe<'input, Left, FinalOutput, Right>>;

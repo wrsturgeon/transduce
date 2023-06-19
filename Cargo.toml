@@ -1,14 +1,14 @@
 [package]
 name = "transduce"
-version = "0.4.0"
+version = "0.4.1"
 authors = ["Will Sturgeon <willstrgn@gmail.com>"]
 edition = "2021"
 description = "Zero-copy isomorphic parsing: your code should look like what it parses."
 license = "MPL-2.0"
 repository = "https://github.com/wrsturgeon/transduce"
 readme = "README.md"
-keywords = ["parsing", "parser", "types", "logic", "metaprogramming"]
-categories = ["parsing", "mathematics", "encoding", "compilers", "data-structures"]
+keywords = ["parsing", "parser", "no_std"]
+categories = ["parsing", "no-std", "no-std::no-alloc", "encoding", "compilers"]
 build = "build.rs"
 
 [dependencies]
@@ -16,3 +16,7 @@ build = "build.rs"
 
 [dev-dependencies]
 proptest = ">=1.2.0"
+
+[features]
+default = ["alloc"]
+alloc = []

@@ -4,11 +4,14 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-use alloc::{format, string::String, vec /* the macro */, vec::Vec};
-
-use crate::Parse;
 #[allow(clippy::wildcard_imports)]
-use crate::{base::*, Parser};
+use crate::base::*;
+
+#[cfg(feature = "alloc")]
+use crate::{Parse, Parser};
+
+#[cfg(feature = "alloc")]
+use alloc::{format, string::String, vec /* the macro */, vec::Vec};
 
 #[test]
 fn a_to_b() {
@@ -21,6 +24,7 @@ fn a_to_b() {
     assert_eq!(parser.parse(b"  A   ->  B     "), Ok((&b'A', &b'B')));
 }
 
+#[cfg(feature = "alloc")]
 #[test]
 fn comma_separated_alphabet() {
     let parser = comma_separated(anything(), true);
@@ -31,12 +35,14 @@ fn comma_separated_alphabet() {
     );
 }
 
+#[cfg(feature = "alloc")]
 #[derive(Debug, PartialEq)]
 enum Literal {
     Character(u8),
     Digit(u8),
 }
 
+#[cfg(feature = "alloc")]
 fn literal<'input>() -> Parser<'input, impl Parse<'input, Input = u8, Output = Literal>> {
     #![allow(clippy::arithmetic_side_effects)]
     ((exact(&b'\'') >> (lowercase() | uppercase()) << exact(&b'\''))
@@ -44,6 +50,7 @@ fn literal<'input>() -> Parser<'input, impl Parse<'input, Input = u8, Output = L
         | (digit().pipe(|x| Ok(Literal::Digit(x))))
 }
 
+#[cfg(feature = "alloc")]
 #[test]
 fn literals() {
     let parser = exact(&b'(') >> comma_separated(literal(), true) << exact(&b')');
@@ -100,36 +107,10 @@ mod failures {
         let _ = (anything() << exact(&b'!')).parse_or_panic(b"???");
     }
 
-    #[test]
-    fn fail_msg() {
-        assert_eq!(
-            (anything() << exact(&b'!')).parse(b"???"),
-            Err(String::from(concat!(
-                "\r\n",
-                "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
-                " 1 | ?\u{1b}[0;1;41m?\u{1b}[0m?\r\n",
-                "   |  \u{1b}[0;1;31m^ Expected 33 but found 63\u{1b}[0m\r\n",
-            )))
-        );
-    }
-
     #[should_panic]
     #[test]
     fn not_everything() {
         let _ = (exact(&b'?') >> exact(&b'?')).parse_or_panic(b"???");
-    }
-
-    #[test]
-    fn not_everything_msg() {
-        assert_eq!(
-            (exact(&b'?') << exact(&b'?')).parse(b"???"),
-            Err(String::from(concat!(
-                "\r\n",
-                "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
-                " 1 | ??\u{1b}[0;1;41m?\u{1b}[0m\r\n",
-                "   |   \u{1b}[0;1;31m^ Unparsed input remains after parsing what should have been everything\u{1b}[0m\r\n",
-            )))
-        );
     }
 
     #[should_panic]
@@ -138,37 +119,10 @@ mod failures {
         let _ = (anything() & anything() & anything() & anything()).parse_or_panic(b"???");
     }
 
-    #[test]
-    fn oob_msg() {
-        assert_eq!(
-            (anything() & anything() & anything() & anything()).parse(b"???"),
-            Err(String::from(concat!(
-                "\r\n",
-                "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
-                " 1 | ???\u{1b}[0;1;41m \u{1b}[0m\r\n",
-                "   |    \u{1b}[0;1;31m^ Reached end of input but expected an item\u{1b}[0m\r\n",
-            )))
-        );
-    }
-
     #[should_panic]
     #[test]
     fn not_expecting_a_newline() {
         let _ = (anything() << exact(&b'!')).parse_or_panic(b"?\n?\n?");
-    }
-
-    #[test]
-    fn not_expecting_a_newline_msg() {
-        assert_eq!(
-            (anything() << exact(&b'!')).parse(b"?\n?\n?"),
-            Err(String::from(concat!(
-                "\r\n",
-                "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
-                " 1 | ?\u{1b}[0;1;41m \u{1b}[0m\r\n",
-                "   |  \u{1b}[0;1;31m^ Expected 33 but found 10\u{1b}[0m\r\n",
-                " 2 | ?\r\n",
-            )))
-        );
     }
 
     #[should_panic]
@@ -177,40 +131,10 @@ mod failures {
         let _ = (anything() << whitespace() << exact(&b'!')).parse_or_panic(b"?\n?\n?");
     }
 
-    #[test]
-    fn multiline_fail_msg() {
-        assert_eq!(
-            (anything() << whitespace() << exact(&b'!')).parse(b"?\n?\n?"),
-            Err(String::from(concat!(
-                "\r\n",
-                "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
-                " 1 | ?\r\n",
-                " 2 | \u{1b}[0;1;41m?\u{1b}[0m\r\n",
-                "   | \u{1b}[0;1;31m^ Expected 33 but found 63\u{1b}[0m\r\n",
-                " 3 | ?\r\n",
-            )))
-        );
-    }
-
     #[should_panic]
     #[test]
     fn multiline_not_everything() {
         let _ = (exact(&b'?') << whitespace() >> exact(&b'?')).parse_or_panic(b"?\n?\n?");
-    }
-
-    #[test]
-    fn multiline_not_everything_msg() {
-        assert_eq!(
-            (exact(&b'?') << whitespace() >> exact(&b'?')).parse(b"?\n?\n?"),
-            Err(String::from(concat!(
-                "\r\n",
-                "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
-                " 1 | ?\r\n",
-                " 2 | ?\u{1b}[0;1;41m \u{1b}[0m\r\n",
-                "   |  \u{1b}[0;1;31m^ Unparsed input remains after parsing what should have been everything\u{1b}[0m\r\n",
-                " 3 | ?\r\n",
-            )))
-        );
     }
 
     #[should_panic]
@@ -223,25 +147,114 @@ mod failures {
         .parse_or_panic(b"?\n?\n?");
     }
 
-    #[test]
-    fn multiline_oob_msg() {
-        assert_eq!(
-            (anything() << whitespace()
-                & anything() << whitespace()
-                & anything() << whitespace()
-                & anything())
-            .parse(b"?\n?\n?"),
-            Err(String::from(concat!(
-                "\r\n",
-                "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
-                " 2 | ?\r\n",
-                " 3 | ?\u{1b}[0;1;41m \u{1b}[0m\r\n",
-                "   |  \u{1b}[0;1;31m^ Reached end of input but expected an item\u{1b}[0m\r\n",
-            )))
-        );
+    #[cfg(feature = "alloc")]
+    mod msg {
+        use super::*;
+
+        #[test]
+        fn fail_msg() {
+            assert_eq!(
+                (anything() << exact(&b'!')).parse(b"???"),
+                Err(String::from(concat!(
+                    "\r\n",
+                    "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
+                    " 1 | ?\u{1b}[0;1;41m?\u{1b}[0m?\r\n",
+                    "   |  \u{1b}[0;1;31m^ Expected 33 but found 63\u{1b}[0m\r\n",
+                )))
+            );
+        }
+
+        #[test]
+        fn not_everything_msg() {
+            assert_eq!(
+                (exact(&b'?') << exact(&b'?')).parse(b"???"),
+                Err(String::from(concat!(
+                    "\r\n",
+                    "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
+                    " 1 | ??\u{1b}[0;1;41m?\u{1b}[0m\r\n",
+                    "   |   \u{1b}[0;1;31m^ Unparsed input remains after parsing what should have been everything\u{1b}[0m\r\n",
+                )))
+            );
+        }
+
+        #[test]
+        fn oob_msg() {
+            assert_eq!(
+                (anything() & anything() & anything() & anything()).parse(b"???"),
+                Err(String::from(concat!(
+                    "\r\n",
+                    "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
+                    " 1 | ???\u{1b}[0;1;41m \u{1b}[0m\r\n",
+                    "   |    \u{1b}[0;1;31m^ Reached end of input but expected an item\u{1b}[0m\r\n",
+                )))
+            );
+        }
+
+        #[test]
+        fn not_expecting_a_newline_msg() {
+            assert_eq!(
+                (anything() << exact(&b'!')).parse(b"?\n?\n?"),
+                Err(String::from(concat!(
+                    "\r\n",
+                    "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
+                    " 1 | ?\u{1b}[0;1;41m \u{1b}[0m\r\n",
+                    "   |  \u{1b}[0;1;31m^ Expected 33 but found 10\u{1b}[0m\r\n",
+                    " 2 | ?\r\n",
+                )))
+            );
+        }
+
+        #[test]
+        fn multiline_fail_msg() {
+            assert_eq!(
+                (anything() << whitespace() << exact(&b'!')).parse(b"?\n?\n?"),
+                Err(String::from(concat!(
+                    "\r\n",
+                    "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
+                    " 1 | ?\r\n",
+                    " 2 | \u{1b}[0;1;41m?\u{1b}[0m\r\n",
+                    "   | \u{1b}[0;1;31m^ Expected 33 but found 63\u{1b}[0m\r\n",
+                    " 3 | ?\r\n",
+                )))
+            );
+        }
+
+        #[test]
+        fn multiline_not_everything_msg() {
+            assert_eq!(
+                (exact(&b'?') << whitespace() >> exact(&b'?')).parse(b"?\n?\n?"),
+                Err(String::from(concat!(
+                    "\r\n",
+                    "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
+                    " 1 | ?\r\n",
+                    " 2 | ?\u{1b}[0;1;41m \u{1b}[0m\r\n",
+                    "   |  \u{1b}[0;1;31m^ Unparsed input remains after parsing what should have been everything\u{1b}[0m\r\n",
+                    " 3 | ?\r\n",
+                )))
+            );
+        }
+
+        #[test]
+        fn multiline_oob_msg() {
+            assert_eq!(
+                (anything() << whitespace()
+                    & anything() << whitespace()
+                    & anything() << whitespace()
+                    & anything())
+                .parse(b"?\n?\n?"),
+                Err(String::from(concat!(
+                    "\r\n",
+                    "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
+                    " 2 | ?\r\n",
+                    " 3 | ?\u{1b}[0;1;41m \u{1b}[0m\r\n",
+                    "   |  \u{1b}[0;1;31m^ Reached end of input but expected an item\u{1b}[0m\r\n",
+                )))
+            );
+        }
     }
 }
 
+#[cfg(feature = "alloc")]
 #[test]
 fn binops_without_precedence() {
     assert_eq!(
@@ -265,6 +278,7 @@ fn binops_without_precedence() {
     );
 }
 
+#[cfg(feature = "alloc")]
 proptest::proptest! {
     #[test]
     fn prop_unsigned_int(i: usize) {
@@ -281,6 +295,7 @@ proptest::proptest! {
     }
 }
 
+#[cfg(feature = "alloc")]
 #[test]
 fn parse_huge_ints() {
     #![allow(clippy::as_conversions, clippy::assertions_on_result_states)]

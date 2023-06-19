@@ -6,18 +6,26 @@
 
 //! Trait for pretty-printing parse errors.
 
-use alloc::{format, string::String};
+use crate::Message;
+
+#[cfg(feature = "alloc")]
+use crate::string_if_alloc;
+
+#[cfg(feature = "alloc")]
+use alloc::format;
 
 /// Pretty-print parse errors.
 pub trait PrintError: Sized + ::core::fmt::Debug {
     /// Print a parsing error in its context.
     #[inline(always)]
+    #[must_use]
     #[allow(unused_variables)]
-    fn pretty_error(msg: String, buffer: &[Self], index: Option<usize>) -> String {
+    fn pretty_error(msg: Message, buffer: &[Self], index: Option<usize>) -> Message {
         msg
     }
 }
 
+#[cfg(feature = "alloc")]
 /// Find the last newline in this slice.
 #[inline(always)]
 fn last_newline(buffer: &[u8]) -> Option<usize> {
@@ -25,6 +33,7 @@ fn last_newline(buffer: &[u8]) -> Option<usize> {
     (0..buffer.len()).rev().find(|&i| buffer[i] == b'\n')
 }
 
+#[cfg(feature = "alloc")]
 /// Find the first newline in this slice.
 #[inline(always)]
 fn next_newline(buffer: &[u8]) -> Option<usize> {
@@ -33,9 +42,10 @@ fn next_newline(buffer: &[u8]) -> Option<usize> {
 }
 
 impl PrintError for u8 {
+    #[cfg(feature = "alloc")]
     #[inline(always)]
     #[allow(clippy::too_many_lines)]
-    fn pretty_error(msg: String, buffer: &[Self], maybe_index: Option<usize>) -> String {
+    fn pretty_error(msg: Message, buffer: &[Self], maybe_index: Option<usize>) -> Message {
         #![allow(clippy::indexing_slicing, clippy::string_add)]
 
         use core::fmt::Write;
@@ -50,7 +60,7 @@ impl PrintError for u8 {
                     match acc.checked_add(1) {
                         Some(x) => acc = x,
                         None => {
-                            return String::from(
+                            return string_if_alloc(
                                 "Parsing error: too many lines of input (would overflow a Rust `usize`)"
                             );
                         }
@@ -60,14 +70,14 @@ impl PrintError for u8 {
             acc
         };
         let ndigit = match usize::try_from(nline.checked_ilog10().unwrap_or(0)) {
-            Err(_) => return String::from("Parsing error: Digits needed to represent the number of lines of input would overflow a Rust `usize`"),
+            Err(_) => return string_if_alloc("Parsing error: Digits needed to represent the number of lines of input would overflow a Rust `usize`"),
             Ok(ok) => match ok.checked_add(2) {
                 Some(x) => x,
-                None => return String::from("Parsing error: Digits needed to represent the number of lines of input would overflow a Rust `usize`"),
+                None => return string_if_alloc("Parsing error: Digits needed to represent the number of lines of input would overflow a Rust `usize`"),
             }
         };
 
-        let mut out = String::from("\r\n");
+        let mut out = string_if_alloc("\r\n");
 
         // Header line:
         for _ in 0..ndigit {
@@ -79,7 +89,7 @@ impl PrintError for u8 {
             match next_newline(&buffer[index..]) {
                 Some(x) => match x.checked_add(index) {
                     s @ Some(_) => s,
-                    None => return String::from(
+                    None => return string_if_alloc(
                         "Parsing error: index of the next newline would overflow a Rust `usize`",
                     ),
                 },
@@ -104,7 +114,7 @@ impl PrintError for u8 {
             },
         );
         if write!(out, "{nline:>ndigit$} | ").is_err() {
-            return String::from(
+            return string_if_alloc(
                 "Internal parsing error: Couldn't write to a Rust heap-allocated string",
             );
         }
@@ -129,14 +139,16 @@ impl PrintError for u8 {
                         )
                         .is_err()
                         {
-                            return String::from(
+                            return string_if_alloc(
                                 "Internal parsing error: Couldn't write to a Rust heap-allocated string",
                             );
                         }
                     }
                 }
             } else {
-                return String::from("Parsing error: Given an index >= the entire length of input");
+                return string_if_alloc(
+                    "Parsing error: Given an index >= the entire length of input",
+                );
             }
             out.push_str("\x1B[0m");
             let i0 = index.saturating_add(1);
@@ -179,5 +191,11 @@ impl PrintError for u8 {
         }
 
         out
+    }
+
+    #[cfg(not(feature = "alloc"))]
+    #[inline(always)]
+    fn pretty_error(msg: Message, _: &[Self], _: Option<usize>) -> Message {
+        msg
     }
 }
