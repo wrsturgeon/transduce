@@ -38,12 +38,12 @@ enum Literal {
 }
 
 fn literal<'input>() -> Parser<'input, impl Parse<'input, Input = u8, Output = Literal>> {
+    #![allow(clippy::arithmetic_side_effects)]
     ((exact(&b'\'') >> (lowercase() | uppercase()) << exact(&b'\''))
         .pipe(|x| Ok(Literal::Character(*x))))
         | (digit().pipe(|x| Ok(Literal::Digit(x))))
 }
 
-#[cfg(not(feature = "nightly"))]
 #[test]
 fn literals() {
     let parser = exact(&b'(') >> comma_separated(literal(), true) << exact(&b')');
@@ -110,7 +110,7 @@ mod failures {
                 " 1 | ?\u{1b}[0;1;41m?\u{1b}[0m?\r\n",
                 "   |  \u{1b}[0;1;31m^ Expected 33 but found 63\u{1b}[0m\r\n",
             )))
-        )
+        );
     }
 
     #[should_panic]
@@ -129,7 +129,7 @@ mod failures {
                 " 1 | ??\u{1b}[0;1;41m?\u{1b}[0m\r\n",
                 "   |   \u{1b}[0;1;31m^ Unparsed input remains after parsing what should have been everything\u{1b}[0m\r\n",
             )))
-        )
+        );
     }
 
     #[should_panic]
@@ -148,7 +148,7 @@ mod failures {
                 " 1 | ???\u{1b}[0;1;41m \u{1b}[0m\r\n",
                 "   |    \u{1b}[0;1;31m^ Reached end of input but expected an item\u{1b}[0m\r\n",
             )))
-        )
+        );
     }
 
     #[should_panic]
@@ -168,7 +168,7 @@ mod failures {
                 "   |  \u{1b}[0;1;31m^ Expected 33 but found 10\u{1b}[0m\r\n",
                 " 2 | ?\r\n",
             )))
-        )
+        );
     }
 
     #[should_panic]
@@ -189,7 +189,7 @@ mod failures {
                 "   | \u{1b}[0;1;31m^ Expected 33 but found 63\u{1b}[0m\r\n",
                 " 3 | ?\r\n",
             )))
-        )
+        );
     }
 
     #[should_panic]
@@ -210,7 +210,7 @@ mod failures {
                 "   |  \u{1b}[0;1;31m^ Unparsed input remains after parsing what should have been everything\u{1b}[0m\r\n",
                 " 3 | ?\r\n",
             )))
-        )
+        );
     }
 
     #[should_panic]
@@ -238,7 +238,7 @@ mod failures {
                 " 3 | ?\u{1b}[0;1;41m \u{1b}[0m\r\n",
                 "   |  \u{1b}[0;1;31m^ Reached end of input but expected an item\u{1b}[0m\r\n",
             )))
-        )
+        );
     }
 }
 

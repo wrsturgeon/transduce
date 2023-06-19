@@ -76,6 +76,7 @@
     clippy::blanket_clippy_restriction_lints,
     clippy::implicit_return,
     clippy::inline_always,
+    clippy::match_ref_pats,
     clippy::mod_module_files,
     clippy::question_mark_used,
     clippy::separated_literal_suffix
@@ -85,6 +86,7 @@ use core::marker::PhantomData;
 
 use alloc::string::String;
 
+// #[cfg(feature = "alloc")]
 extern crate alloc;
 
 pub mod base;
@@ -106,7 +108,7 @@ pub struct ParseError {
 /// Immediately return with an error. The second argument requests the slice of input _after_ this error, so we can deduce where it happened.
 #[macro_export]
 macro_rules! bail {
-    ($fmsg:expr, $not_yet_parsed:expr) => {
+    ($fmsg:expr, $not_yet_parsed:expr $(,)?) => {
         return Err(ParseError {
             message: ::alloc::format!($fmsg),
             not_yet_parsed: Some($not_yet_parsed.len()),
@@ -125,7 +127,7 @@ pub trait Parse<'input> {
     /// Parse exactly one item of input; don't continue without further instruction.
     /// # Errors
     /// When parsing fails.
-    fn parse(
+    fn partial(
         &self,
         input: &'input [Self::Input],
     ) -> Result<(Self::Output, &'input [Self::Input]), ParseError>;
@@ -139,16 +141,6 @@ impl<'input, Inside: Parse<'input>> Parser<'input, Inside> {
     #[inline(always)]
     pub const fn new(inside: Inside) -> Self {
         Self(inside, PhantomData)
-    }
-    /// Parse exactly one item of input; don't continue without further instruction.
-    /// # Errors
-    /// When parsing fails.
-    #[inline(always)]
-    fn partial(
-        &self,
-        input: &'input [Inside::Input],
-    ) -> Result<(Inside::Output, &'input [Inside::Input]), ParseError> {
-        self.0.parse(input)
     }
 
     /// Parse a list of items (usually characters, in which case this "list of characters" is effectively a string).
@@ -251,11 +243,11 @@ impl<'input, Inside: Parse<'input>> Parse<'input> for Parser<'input, Inside> {
     type Input = Inside::Input;
     type Output = Inside::Output;
     #[inline(always)]
-    fn parse(
+    fn partial(
         &self,
         input: &'input [Self::Input],
     ) -> Result<(Self::Output, &'input [Self::Input]), ParseError> {
-        self.0.parse(input)
+        self.0.partial(input)
     }
 }
 
@@ -280,7 +272,7 @@ impl<'input, Left: Parse<'input, Input = Right::Input>, Right: Parse<'input>> Pa
     type Input = Right::Input;
     type Output = Right::Output;
     #[inline(always)]
-    fn parse(
+    fn partial(
         &self,
         input: &'input [Self::Input],
     ) -> Result<(Self::Output, &'input [Self::Input]), ParseError> {
@@ -318,7 +310,7 @@ impl<'input, Left: Parse<'input>, Right: Parse<'input, Input = Left::Input>> Par
     type Input = Left::Input;
     type Output = Left::Output;
     #[inline(always)]
-    fn parse(
+    fn partial(
         &self,
         input: &'input [Self::Input],
     ) -> Result<(Self::Output, &'input [Self::Input]), ParseError> {
@@ -358,7 +350,7 @@ impl<'input, Left: Parse<'input>, Right: Parse<'input, Input = Left::Input>> Par
     type Input = Left::Input;
     type Output = (Left::Output, Right::Output);
     #[inline(always)]
-    fn parse(
+    fn partial(
         &self,
         input: &'input [Self::Input],
     ) -> Result<(Self::Output, &'input [Self::Input]), ParseError> {
@@ -405,7 +397,7 @@ impl<
     type Input = Left::Input;
     type Output = Left::Output;
     #[inline(always)]
-    fn parse(
+    fn partial(
         &self,
         input: &'input [Self::Input],
     ) -> Result<(Self::Output, &'input [Self::Input]), ParseError> {
@@ -459,7 +451,7 @@ impl<
     type Input = Left::Input;
     type Output = FinalOutput;
     #[inline(always)]
-    fn parse(
+    fn partial(
         &self,
         input: &'input [Self::Input],
     ) -> Result<(Self::Output, &'input [Self::Input]), ParseError> {

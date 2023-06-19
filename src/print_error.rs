@@ -38,6 +38,8 @@ impl PrintError for u8 {
     fn pretty_error(msg: String, buffer: &[Self], maybe_index: Option<usize>) -> String {
         #![allow(clippy::indexing_slicing, clippy::string_add)]
 
+        use core::fmt::Write;
+
         let len = buffer.len();
         let out_of_bounds = maybe_index.is_none();
         let index = maybe_index.unwrap_or(len);
@@ -83,9 +85,9 @@ impl PrintError for u8 {
                 },
                 None => None,
             };
-        let line_begin = match last_newline(&buffer[..index]) {
-            None => 0, // no previous line
-            Some(nl) => {
+        let line_begin = last_newline(&buffer[..index]).map_or_else(
+            || 0, // No previous line
+            |nl| {
                 // Print the previous line
                 out.push_str(&nline.checked_sub(1).map_or_else(
                     || format!("{:>ndigit$} | ", '?'),
@@ -99,9 +101,13 @@ impl PrintError for u8 {
                 );
                 out.push_str("\r\n");
                 nl.saturating_add(1) // start of the current line
-            }
-        };
-        out.push_str(&format!("{nline:>ndigit$} | "));
+            },
+        );
+        if write!(out, "{nline:>ndigit$} | ").is_err() {
+            return String::from(
+                "Internal parsing error: Couldn't write to a Rust heap-allocated string",
+            );
+        }
         out.push_str(
             core::str::from_utf8(&buffer[line_begin..index])
                 .unwrap_or("[Input to parse was not valid UTF-8 and thus can't be displayed]"),
@@ -113,12 +119,21 @@ impl PrintError for u8 {
         } else {
             if let Some(c) = buffer.get(index) {
                 match c {
-                    32.. => out.push(buffer[index].into()), // visible characters
-                    b'\n' | b'\r' | b'\t' => out.push(' '),
-                    hex => out.push_str(&format!(
-                        "[raw ASCII character #{hex:} = '{:}']",
-                        char::from(*hex)
-                    )),
+                    &(32..) => out.push(buffer[index].into()), // visible characters
+                    &(b'\n' | b'\r' | b'\t') => out.push(' '),
+                    &hex => {
+                        if write!(
+                            out,
+                            "[raw ASCII character #{hex:} = '{:}']",
+                            char::from(hex)
+                        )
+                        .is_err()
+                        {
+                            return String::from(
+                                "Internal parsing error: Couldn't write to a Rust heap-allocated string",
+                            );
+                        }
+                    }
                 }
             } else {
                 return String::from("Parsing error: Given an index >= the entire length of input");
