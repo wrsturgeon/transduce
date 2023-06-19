@@ -6,8 +6,6 @@
 
 //! Trait for pretty-printing parse errors.
 
-#![allow(clippy::format_push_string)] // FIXME
-
 use alloc::{format, string::String};
 
 /// Pretty-print parse errors.
@@ -47,79 +45,90 @@ impl PrintError for u8 {
             let mut acc: usize = 1; // 1-indexed
             for c in &buffer[..index] {
                 if c == &b'\n' {
-                    acc = acc.saturating_add(1);
+                    match acc.checked_add(1) {
+                        Some(x) => acc = x,
+                        None => {
+                            return String::from(
+                                "Parsing error: too many lines of input (would overflow a Rust `usize`)"
+                            );
+                        }
+                    };
                 }
             }
             acc
         };
-        let ndigit = usize::max(
-            2,
-            match usize::try_from(nline.checked_ilog10().unwrap_or(0)) {
-                Err(err) => {
-                    return format!("Number of digits did not fit in a Rust `usize`: {err:}")
-                }
-                Ok(ok) => ok,
+        let ndigit = match usize::try_from(nline.checked_ilog10().unwrap_or(0)) {
+            Err(_) => return String::from("Parsing error: Digits needed to represent the number of lines of input would overflow a Rust `usize`"),
+            Ok(ok) => match ok.checked_add(2) {
+                Some(x) => x,
+                None => return String::from("Parsing error: Digits needed to represent the number of lines of input would overflow a Rust `usize`"),
             }
-            .saturating_add(1),
-        );
+        };
 
         let mut out = String::from("\r\n");
 
         // Header line:
-        for _ in 0..ndigit.saturating_sub(2) {
+        for _ in 0..ndigit {
             out.push(' ');
         }
-        // 31: red
-        // 32: green
-        // 33: yellow
-        // 34: blue
-        // 35: purple
-        // 36: light blue
-        out.push_str("\x1B[0m...| \x1b[0;1;31mError while parsing:\x1b[0m\r\n");
+        out.push_str(" | \x1b[0;1;31mError while parsing:\x1b[0m\r\n");
 
-        let line_end = next_newline(&buffer[index..]).map(|x| index.saturating_add(x));
-        let line_begin = last_newline(&buffer[..index]);
-        let begin = line_begin.map_or(0, |begin| {
-            out.push_str(&nline.checked_sub(1).map_or_else(
-                || format!("{:>ndigit$} | ", '?'),
-                |line| format!("{line:>ndigit$} | "),
-            ));
-            out.push_str(
-                core::str::from_utf8(
-                    &buffer
-                        [last_newline(&buffer[..begin]).map_or(0, |x| x.saturating_add(1))..begin],
-                )
-                .unwrap_or("[Input to parse was not valid UTF-8 and thus can't be displayed]"),
-            );
-            out.push_str("\r\n");
-            begin
-        });
-        out.push_str(&format!("{nline:>ndigit$} | "));
-        let second = begin.saturating_add(1);
-        if second < index {
-            out.push_str(
-                core::str::from_utf8(&buffer[second..index])
+        let line_end =
+            match next_newline(&buffer[index..]) {
+                Some(x) => match x.checked_add(index) {
+                    s @ Some(_) => s,
+                    None => return String::from(
+                        "Parsing error: index of the next newline would overflow a Rust `usize`",
+                    ),
+                },
+                None => None,
+            };
+        let line_begin = match last_newline(&buffer[..index]) {
+            None => 0, // no previous line
+            Some(nl) => {
+                // Print the previous line
+                out.push_str(&nline.checked_sub(1).map_or_else(
+                    || format!("{:>ndigit$} | ", '?'),
+                    |line| format!("{line:>ndigit$} | "),
+                ));
+                out.push_str(
+                    core::str::from_utf8(
+                        &buffer[last_newline(&buffer[..nl]).map_or(0, |x| x.saturating_add(1))..nl],
+                    )
                     .unwrap_or("[Input to parse was not valid UTF-8 and thus can't be displayed]"),
-            );
-        }
+                );
+                out.push_str("\r\n");
+                nl.saturating_add(1) // start of the current line
+            }
+        };
+        out.push_str(&format!("{nline:>ndigit$} | "));
+        out.push_str(
+            core::str::from_utf8(&buffer[line_begin..index])
+                .unwrap_or("[Input to parse was not valid UTF-8 and thus can't be displayed]"),
+        );
         out.push_str("\x1B[0;1;41m");
         if out_of_bounds {
             out.push(' ');
             out.push_str("\x1B[0m");
         } else {
-            match buffer[index] {
-                32.. => out.push(buffer[index].into()), // visible characters
-                b'\n' => out.push_str("[newline]"),
-                b'\r' => out.push_str("[carriage return, probably a newline]"),
-                b'\t' => out.push_str("[tab]"),
-                hex => out.push_str(&format!("[raw ASCII character #{hex:}]")),
+            if let Some(c) = buffer.get(index) {
+                match c {
+                    32.. => out.push(buffer[index].into()), // visible characters
+                    b'\n' | b'\r' | b'\t' => out.push(' '),
+                    hex => out.push_str(&format!(
+                        "[raw ASCII character #{hex:} = '{:}']",
+                        char::from(*hex)
+                    )),
+                }
+            } else {
+                return String::from("Parsing error: Given an index >= the entire length of input");
             }
             out.push_str("\x1B[0m");
-            let next = index.saturating_add(1);
-            let valid_end = line_end.unwrap_or(len);
-            if next < valid_end {
+            let i0 = index.saturating_add(1);
+            let i1 = line_end.unwrap_or(len);
+            if i0 < i1 {
                 out.push_str(
-                    core::str::from_utf8(&buffer[next..valid_end]).unwrap_or(
+                    core::str::from_utf8(&buffer[i0..i1]).unwrap_or(
                         "[Input to parse was not valid UTF-8 and thus can't be displayed]",
                     ),
                 );
@@ -132,7 +141,7 @@ impl PrintError for u8 {
             out.push(' ');
         }
         out.push_str(" | ");
-        for _ in line_begin.map_or(0, |x| x.saturating_add(1))..index {
+        for _ in line_begin..index {
             out.push(' ');
         }
         out.push_str("\x1B[0;1;31m^ ");

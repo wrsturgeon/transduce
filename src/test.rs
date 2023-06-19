@@ -4,83 +4,73 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-#![allow(dead_code, unused_imports)] // FIXME
+use alloc::{format, string::String, vec /* the macro */, vec::Vec};
 
-use alloc::{vec /* the macro */, vec::Vec};
-
+use crate::Parse;
 #[allow(clippy::wildcard_imports)]
-use crate::{base::*, Parser, Read};
+use crate::{base::*, Parser};
 
 #[test]
 fn a_to_b() {
-    let parser = || {
+    let parser = {
         whitespace() >> anything() << whitespace() << exact(&b'-') << exact(&b'>') << whitespace()
             & anything() << whitespace() << end()
     };
-    assert_eq!(parser().parse(b"A -> B"), Ok((&b'A', &b'B')));
-    assert_eq!(parser().parse(b"A->B"), Ok((&b'A', &b'B')));
-    assert_eq!(parser().parse(b"  A   ->  B     "), Ok((&b'A', &b'B')));
+    assert_eq!(parser.parse(b"A -> B"), Ok((&b'A', &b'B')));
+    assert_eq!(parser.parse(b"A->B"), Ok((&b'A', &b'B')));
+    assert_eq!(parser.parse(b"  A   ->  B     "), Ok((&b'A', &b'B')));
 }
 
 #[test]
 fn comma_separated_alphabet() {
+    let parser = comma_separated(anything(), true);
+    assert_eq!(parser.partial(b"a"), Ok((vec![&b'a'], &[][..])));
     assert_eq!(
-        comma_separated(anything()).0(b"a"),
-        Ok((vec![&b'a'], &*vec![]))
-    );
-    assert_eq!(
-        comma_separated(anything()).0(b"   a, b, c,d,e,f,        g    ,    h , i       ,   j , k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z     ,      ").map(|(v, etc)| (v.into_iter().copied().collect(), etc)),
-        Ok(((b'a'..=b'z').collect::<Vec<_>>(), &*vec![])),
+        parser.partial(b"   a, b, c,d,e,f,        g    ,    h , i       ,   j , k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z     ,      ").map(|(v, etc)| (v.into_iter().map(|x| char::from(*x)).collect(), etc)),
+        Ok((('a'..='z').collect::<Vec<_>>(), &*vec![])),
     );
 }
 
-// FIXME
-/*
-
 #[derive(Debug, PartialEq)]
-enum Literal<'a> {
-    Character(&'a u8),
+enum Literal {
+    Character(u8),
     Digit(u8),
 }
 
-impl Read<u8> for Literal<'_> {
-    type InternalParser = _;
-    #[inline(always)]
-    #[must_use]
-    fn parser() -> Parser<Self::InternalParser> {
-        exact(&b'\'') >> (lowercase() | uppercase) << exact(&b'\'') ^ Literal::Character
-            | || digit() ^ Literal::Digit
-    }
+fn literal<'input>() -> Parser<'input, impl Parse<'input, Input = u8, Output = Literal>> {
+    ((exact(&b'\'') >> (lowercase() | uppercase()) << exact(&b'\''))
+        .pipe(|x| Ok(Literal::Character(*x))))
+        | (digit().pipe(|x| Ok(Literal::Digit(x))))
 }
 
-#[cfg(not(feature = "nightly"))] // FIXME
+#[cfg(not(feature = "nightly"))]
 #[test]
 fn literals() {
-    let parser = exact(&b'(') >> comma_separated(Literal::parser) << exact(&b')');
+    let parser = exact(&b'(') >> comma_separated(literal(), true) << exact(&b')');
     assert_eq!(
         parser.parse(
             b"('a', 0, 'b', 1, 'c', 2, 'd', 3, 'e', 4, 'f', 5, 'g', 6, 'h', 7, 'i', 8, 'j', 9,)"
         ),
         Ok(vec![
-            Literal::Character(&b'a'),
+            Literal::Character(b'a'),
             Literal::Digit(0),
-            Literal::Character(&b'b'),
+            Literal::Character(b'b'),
             Literal::Digit(1),
-            Literal::Character(&b'c'),
+            Literal::Character(b'c'),
             Literal::Digit(2),
-            Literal::Character(&b'd'),
+            Literal::Character(b'd'),
             Literal::Digit(3),
-            Literal::Character(&b'e'),
+            Literal::Character(b'e'),
             Literal::Digit(4),
-            Literal::Character(&b'f'),
+            Literal::Character(b'f'),
             Literal::Digit(5),
-            Literal::Character(&b'g'),
+            Literal::Character(b'g'),
             Literal::Digit(6),
-            Literal::Character(&b'h'),
+            Literal::Character(b'h'),
             Literal::Digit(7),
-            Literal::Character(&b'i'),
+            Literal::Character(b'i'),
             Literal::Digit(8),
-            Literal::Character(&b'j'),
+            Literal::Character(b'j'),
             Literal::Digit(9),
         ])
     );
@@ -89,13 +79,11 @@ fn literals() {
 #[test]
 fn optional_zero() {
     #![allow(clippy::assertions_on_result_states)]
-    let parser = || optional(|| exact(&b'0')) >> exact(&b'1') & exact(&b'2') & exact(&b'3');
-    assert_eq!(parser().parse(b"123"), Ok(((&b'1', &b'2'), &b'3')));
-    assert_eq!(parser().parse(b"0123"), Ok(((&b'1', &b'2'), &b'3')));
-    assert!(parser().parse(b"00123").is_err());
+    let parser = optional(exact(&b'0')) >> exact(&b'1') & exact(&b'2') & exact(&b'3');
+    assert_eq!(parser.parse(b"123"), Ok(((&b'1', &b'2'), &b'3')));
+    assert_eq!(parser.parse(b"0123"), Ok(((&b'1', &b'2'), &b'3')));
+    assert!(parser.parse(b"00123").is_err());
 }
-
-*/
 
 mod failures {
     #![allow(
@@ -106,43 +94,126 @@ mod failures {
 
     use super::*;
 
-    #[should_panic] // Remove to see the gorgeous error message
+    #[should_panic]
     #[test]
     fn fail() {
         let _ = (anything() << exact(&b'!')).parse_or_panic(b"???");
     }
 
-    #[should_panic] // Remove to see the gorgeous error message
+    #[test]
+    fn fail_msg() {
+        assert_eq!(
+            (anything() << exact(&b'!')).parse(b"???"),
+            Err(String::from(concat!(
+                "\r\n",
+                "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
+                " 1 | ?\u{1b}[0;1;41m?\u{1b}[0m?\r\n",
+                "   |  \u{1b}[0;1;31m^ Expected 33 but found 63\u{1b}[0m\r\n",
+            )))
+        )
+    }
+
+    #[should_panic]
     #[test]
     fn not_everything() {
         let _ = (exact(&b'?') >> exact(&b'?')).parse_or_panic(b"???");
     }
 
-    #[should_panic] // Remove to see the gorgeous error message
+    #[test]
+    fn not_everything_msg() {
+        assert_eq!(
+            (exact(&b'?') << exact(&b'?')).parse(b"???"),
+            Err(String::from(concat!(
+                "\r\n",
+                "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
+                " 1 | ??\u{1b}[0;1;41m?\u{1b}[0m\r\n",
+                "   |   \u{1b}[0;1;31m^ Unparsed input remains after parsing what should have been everything\u{1b}[0m\r\n",
+            )))
+        )
+    }
+
+    #[should_panic]
     #[test]
     fn oob() {
         let _ = (anything() & anything() & anything() & anything()).parse_or_panic(b"???");
     }
 
-    #[should_panic] // Remove to see the gorgeous error message
+    #[test]
+    fn oob_msg() {
+        assert_eq!(
+            (anything() & anything() & anything() & anything()).parse(b"???"),
+            Err(String::from(concat!(
+                "\r\n",
+                "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
+                " 1 | ???\u{1b}[0;1;41m \u{1b}[0m\r\n",
+                "   |    \u{1b}[0;1;31m^ Reached end of input but expected an item\u{1b}[0m\r\n",
+            )))
+        )
+    }
+
+    #[should_panic]
     #[test]
     fn not_expecting_a_newline() {
         let _ = (anything() << exact(&b'!')).parse_or_panic(b"?\n?\n?");
     }
 
-    #[should_panic] // Remove to see the gorgeous error message
+    #[test]
+    fn not_expecting_a_newline_msg() {
+        assert_eq!(
+            (anything() << exact(&b'!')).parse(b"?\n?\n?"),
+            Err(String::from(concat!(
+                "\r\n",
+                "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
+                " 1 | ?\u{1b}[0;1;41m \u{1b}[0m\r\n",
+                "   |  \u{1b}[0;1;31m^ Expected 33 but found 10\u{1b}[0m\r\n",
+                " 2 | ?\r\n",
+            )))
+        )
+    }
+
+    #[should_panic]
     #[test]
     fn multiline_fail() {
         let _ = (anything() << whitespace() << exact(&b'!')).parse_or_panic(b"?\n?\n?");
     }
 
-    #[should_panic] // Remove to see the gorgeous error message
+    #[test]
+    fn multiline_fail_msg() {
+        assert_eq!(
+            (anything() << whitespace() << exact(&b'!')).parse(b"?\n?\n?"),
+            Err(String::from(concat!(
+                "\r\n",
+                "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
+                " 1 | ?\r\n",
+                " 2 | \u{1b}[0;1;41m?\u{1b}[0m\r\n",
+                "   | \u{1b}[0;1;31m^ Expected 33 but found 63\u{1b}[0m\r\n",
+                " 3 | ?\r\n",
+            )))
+        )
+    }
+
+    #[should_panic]
     #[test]
     fn multiline_not_everything() {
         let _ = (exact(&b'?') << whitespace() >> exact(&b'?')).parse_or_panic(b"?\n?\n?");
     }
 
-    #[should_panic] // Remove to see the gorgeous error message
+    #[test]
+    fn multiline_not_everything_msg() {
+        assert_eq!(
+            (exact(&b'?') << whitespace() >> exact(&b'?')).parse(b"?\n?\n?"),
+            Err(String::from(concat!(
+                "\r\n",
+                "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
+                " 1 | ?\r\n",
+                " 2 | ?\u{1b}[0;1;41m \u{1b}[0m\r\n",
+                "   |  \u{1b}[0;1;31m^ Unparsed input remains after parsing what should have been everything\u{1b}[0m\r\n",
+                " 3 | ?\r\n",
+            )))
+        )
+    }
+
+    #[should_panic]
     #[test]
     fn multiline_oob() {
         let _ = (anything() << whitespace()
@@ -151,52 +222,62 @@ mod failures {
             & anything())
         .parse_or_panic(b"?\n?\n?");
     }
-}
 
-// FIXME
-/*
+    #[test]
+    fn multiline_oob_msg() {
+        assert_eq!(
+            (anything() << whitespace()
+                & anything() << whitespace()
+                & anything() << whitespace()
+                & anything())
+            .parse(b"?\n?\n?"),
+            Err(String::from(concat!(
+                "\r\n",
+                "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
+                " 2 | ?\r\n",
+                " 3 | ?\u{1b}[0;1;41m \u{1b}[0m\r\n",
+                "   |  \u{1b}[0;1;31m^ Reached end of input but expected an item\u{1b}[0m\r\n",
+            )))
+        )
+    }
+}
 
 #[test]
 fn binops_without_precedence() {
     assert_eq!(
-        precedence::raw_binops(
-            lowercase,
-            &::alloc::collections::BTreeSet::from_iter([
-                &b"+"[..],
-                &b"-"[..],
-                &b"*"[..],
-                &b"/"[..]
-            ])
+        precedence::raw_binary_ops(
+            lowercase(),
+            ::alloc::collections::BTreeSet::from_iter([&b"+"[..], b"-", b"*", b"/"])
         )
-        .once(b"a + b - c * d / e")
-        .map(|(a, _)| a),
+        .partial(b"a + b - c * d / e"),
         Ok((
-            &b'a',
-            ::vec![
-                (&b"+"[..], &b'b'),
-                (b"-", &b'c'),
-                (b"*", &b'd'),
-                (b"/", &b'e')
-            ]
+            (
+                &b'a',
+                vec![
+                    (&b"+"[..], &b'b'),
+                    (b"-", &b'c'),
+                    (b"*", &b'd'),
+                    (b"/", &b'e')
+                ]
+            ),
+            &[][..]
         ))
     );
 }
 
 proptest::proptest! {
     #[test]
-    fn prop_unsigned_int(i in usize::MIN..=usize::MAX) {
-        assert_eq!(
-            unsigned_integer().parse(format_args!("{i:}").as_bytes()),
-            Ok(i),
-        );
+    fn prop_unsigned_int(i: usize) {
+        let fmt = format!("{i:}");
+        let p = unsigned_integer().parse_or_panic(fmt.as_bytes());
+        assert_eq!(p, i);
     }
 
     #[test]
-    fn prop_signed_int(i in isize::MIN..=isize::MAX) {
-        assert_eq!(
-            signed_integer().parse(format_args!("{i:}").as_bytes()),
-            Ok(i),
-        );
+    fn prop_signed_int(i: isize) {
+        let fmt = format!("{i:}");
+        let p = signed_integer().parse_or_panic(fmt.as_bytes());
+        assert_eq!(p, i);
     }
 }
 
@@ -205,16 +286,14 @@ fn parse_huge_ints() {
     #![allow(clippy::as_conversions, clippy::assertions_on_result_states)]
     const SMALLER: usize = usize::MAX;
     const LARGER: u128 = (SMALLER as u128).overflowing_add(1).0;
+    let fmt_smaller = format!("{SMALLER:}");
+    let fmt_larger = format!("{LARGER:}");
     assert_eq!(
-        unsigned_integer().parse(format_args!("{SMALLER:}").as_bytes()),
+        unsigned_integer().parse(fmt_smaller.as_bytes()),
         Ok(SMALLER)
     );
     if core::mem::size_of::<usize>() >= core::mem::size_of::<u128>() {
         return; // nothing we can do on this machine
     }
-    assert!(unsigned_integer()
-        .parse(format_args!("{LARGER:}").as_bytes())
-        .is_err());
+    assert!(unsigned_integer().parse(fmt_larger.as_bytes()).is_err());
 }
-
-*/

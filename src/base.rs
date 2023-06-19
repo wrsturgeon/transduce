@@ -8,7 +8,7 @@
 
 #![allow(clippy::tests_outside_test_module)]
 
-use crate::{bail, print_error::PrintError, Parse, ParseError, Parser};
+use crate::{print_error::PrintError, *};
 use alloc::{collections::BTreeSet, format, string::String, vec /* the macro */, vec::Vec};
 use core::marker::PhantomData;
 
@@ -25,7 +25,7 @@ macro_rules! end_of_input {
     () => {
         return Err(ParseError {
             message: String::from("Reached end of input but expected an item"),
-            etc: None,
+            not_yet_parsed: None,
         })
     };
 }
@@ -33,7 +33,7 @@ macro_rules! end_of_input {
 /// Make sure we've reached exactly the end of the stream of input; don't advance to it.
 #[derive(Debug)]
 pub struct End<Input: PrintError>(PhantomData<Input>);
-impl<'input, Input: PrintError> Parse<'input, 'static> for End<Input> {
+impl<'input, Input: 'input + PrintError> Parse<'input> for End<Input> {
     type Input = Input;
     type Output = ();
     #[inline(always)]
@@ -53,7 +53,7 @@ impl<'input, Input: PrintError> Parse<'input, 'static> for End<Input> {
 /// Make sure we've reached exactly the end of the stream of input; don't advance to it.
 #[inline(always)]
 #[must_use]
-pub const fn end<'input, Input: PrintError>() -> Parser<'input, 'static, End<Input>> {
+pub const fn end<'input, Input: 'input + PrintError>() -> Parser<'input, End<Input>> {
     Parser::new(End(PhantomData))
 }
 ptest! {
@@ -66,11 +66,9 @@ ptest! {
 /// Match any single item and return a reference to it.
 #[derive(Debug)]
 pub struct Anything<Input: PrintError>(PhantomData<Input>);
-impl<'input: 'output, 'output, Input: 'output + PrintError> Parse<'input, 'output>
-    for Anything<Input>
-{
+impl<'input, Input: 'input + PrintError> Parse<'input> for Anything<Input> {
     type Input = Input;
-    type Output = &'output Input;
+    type Output = &'input Input;
     #[inline(always)]
     fn parse(
         &self,
@@ -86,8 +84,7 @@ impl<'input: 'output, 'output, Input: 'output + PrintError> Parse<'input, 'outpu
 /// Match any single item and return a reference to it.
 #[inline(always)]
 #[must_use]
-pub const fn anything<'input: 'output, 'output, Input: 'output + PrintError>(
-) -> Parser<'input, 'output, Anything<Input>> {
+pub const fn anything<'input, Input: 'input + PrintError>() -> Parser<'input, Anything<Input>> {
     Parser::new(Anything(PhantomData))
 }
 ptest! {
@@ -102,15 +99,14 @@ ptest! {
 #[inline(always)]
 #[must_use]
 pub fn satisfy<
-    'input: 'output,
-    'output,
-    Input: 'output + PrintError,
-    Predicate: Fn(&'output Input) -> bool,
-    WriteMessage: Fn(&'output Input) -> String,
+    'input,
+    Input: 'input + PrintError,
+    Predicate: Fn(&'input Input) -> bool,
+    WriteMessage: Fn(&'input Input) -> String,
 >(
     predicate: Predicate,
     msg: WriteMessage,
-) -> Parser<'input, 'output, impl Parse<'input, 'output, Input = Input, Output = &'output Input>> {
+) -> Parser<'input, impl Parse<'input, Input = Input, Output = &'input Input>> {
     anything() ^ move |x| if predicate(x) { Ok(x) } else { Err(msg(x)) }
 }
 ptest! {
@@ -127,13 +123,12 @@ ptest! {
 #[inline(always)]
 #[must_use]
 pub fn satisfy_result<
-    'input: 'output,
-    'output,
-    Input: 'output + PrintError,
-    Predicate: Fn(&'output Input) -> Result<(), String>,
+    'input,
+    Input: 'input + PrintError,
+    Predicate: Fn(&'input Input) -> Result<(), String>,
 >(
     predicate: Predicate,
-) -> Parser<'input, 'output, impl Parse<'input, 'output, Input = Input, Output = &'output Input>> {
+) -> Parser<'input, impl Parse<'input, Input = Input, Output = &'input Input>> {
     anything() ^ move |x| predicate(x).map(|()| x)
 }
 ptest! {
@@ -150,15 +145,14 @@ ptest! {
 #[inline(always)]
 #[must_use]
 pub fn not<
-    'input: 'output,
-    'output,
-    Input: 'output + PrintError,
-    Predicate: Fn(&'output Input) -> bool,
-    WriteMessage: Fn(&'output Input) -> String,
+    'input,
+    Input: 'input + PrintError,
+    Predicate: Fn(&'input Input) -> bool,
+    WriteMessage: Fn(&'input Input) -> String,
 >(
     predicate: Predicate,
     msg: WriteMessage,
-) -> Parser<'input, 'output, impl Parse<'input, 'output, Input = Input, Output = &'output Input>> {
+) -> Parser<'input, impl Parse<'input, Input = Input, Output = &'input Input>> {
     satisfy(move |x| !predicate(x), msg)
 }
 ptest! {
@@ -174,9 +168,9 @@ ptest! {
 /// Match exactly this item and return a reference to the original (not the parsed one).
 #[inline(always)]
 #[must_use]
-pub fn exact<'input: 'output, 'output, Input: 'output + PartialEq<Input> + PrintError>(
-    reference: &'output Input,
-) -> Parser<'input, 'output, impl Parse<'input, 'output, Input = Input, Output = &'output Input>> {
+pub fn exact<'input, Input: PartialEq<Input> + PrintError>(
+    reference: &'input Input,
+) -> Parser<'input, impl Parse<'input, Input = Input, Output = &'input Input>> {
     satisfy(
         move |x| reference.eq(x),
         move |head| format!("Expected {reference:#?} but found {head:#?}"),
@@ -194,12 +188,10 @@ ptest! {
 
 /// Match exactly this sequence of items.
 #[derive(Debug)]
-pub struct ExactSeq<'output, Input: PartialEq + PrintError>(&'output [Input]);
-impl<'input, 'output, Input: PartialEq + PrintError> Parse<'input, 'output>
-    for ExactSeq<'output, Input>
-{
+pub struct ExactSeq<'platonic, Input: PartialEq + PrintError>(&'platonic [Input]);
+impl<'input, Input: 'input + PartialEq + PrintError> Parse<'input> for ExactSeq<'_, Input> {
     type Input = Input;
-    type Output = &'output [Input];
+    type Output = &'input [Input];
     #[inline(always)]
     fn parse(
         &self,
@@ -221,15 +213,15 @@ impl<'input, 'output, Input: PartialEq + PrintError> Parse<'input, 'output>
                 }
             }
         }
-        Ok((self.0, etc))
+        Ok((input.split_at(self.0.len()).0, etc))
     }
 }
 /// Match exactly this sequence of items.
 #[inline(always)]
 #[must_use]
-pub const fn exact_seq<'input, Input: PartialEq + PrintError>(
-    exactly: &[Input],
-) -> Parser<'input, '_, ExactSeq<'_, Input>> {
+pub const fn exact_seq<'platonic, 'input, Input: 'input + PartialEq + PrintError>(
+    exactly: &'platonic [Input],
+) -> Parser<'input, ExactSeq<'platonic, Input>> {
     Parser::new(ExactSeq(exactly))
 }
 ptest! {
@@ -243,9 +235,9 @@ ptest! {
 /// Match any of a set of options. Set represented as a binary tree for efficient lookup.
 #[inline(always)]
 #[must_use]
-pub fn any<'input: 'output, 'output, Input: 'output + Ord + PrintError>(
+pub fn any<'input, Input: 'input + Ord + PrintError>(
     set: BTreeSet<Input>,
-) -> Parser<'input, 'output, impl Parse<'input, 'output, Input = Input, Output = &'output Input>> {
+) -> Parser<'input, impl Parse<'input, Input = Input, Output = &'input Input>> {
     satisfy_result(move |x| {
         if set.contains(x) {
             Ok(())
@@ -264,21 +256,25 @@ ptest! {
 
 /// Match any of a set of sequences of options. Set represented as a binary tree for efficient lookup.
 #[derive(Debug)]
-pub struct AnySeq<'output, Input: Ord + PrintError>(BTreeSet<&'output [Input]>); // TODO: reference the btree
-impl<'input: 'output, 'output, Input: Ord + PrintError> Parse<'input, 'output>
-    for AnySeq<'output, Input>
-{
+pub struct AnySeq<'platonic, Input: Ord + PrintError>(BTreeSet<&'platonic [Input]>); // TODO: reference the btree
+impl<'input, Input: 'input + Ord + PrintError> Parse<'input> for AnySeq<'_, Input> {
     type Input = Input;
-    type Output = &'output [Input];
+    type Output = &'input [Input];
     #[inline(always)]
     fn parse(
         &self,
         input: &'input [Self::Input],
     ) -> Result<(Self::Output, &'input [Self::Input]), ParseError> {
-        let Some((head, _)) = input.split_first() else { end_of_input!() };
-        for option in self.0.range(core::slice::from_ref(head)..=input) {
-            if let ok @ Ok(_) = exact_seq(option).partial(input) {
-                return ok;
+        let Some((head, _)) = input.split_first() else {
+            if self.0.contains(input/* [] */) {
+                return Ok((input, input));
+            } else {
+                end_of_input!()
+            }
+        };
+        for &option in self.0.range(core::slice::from_ref(head)..=input) {
+            if let Ok((parsed, etc)) = exact_seq(option).partial(input) {
+                return Ok((parsed, etc));
             }
         }
         match input.split_first() {
@@ -293,9 +289,9 @@ impl<'input: 'output, 'output, Input: Ord + PrintError> Parse<'input, 'output>
 /// Match any of a set of sequences of options. Set represented as a binary tree for efficient lookup.
 #[inline(always)]
 #[must_use]
-pub const fn any_seq<'input: 'output, 'output, Input: Ord + PrintError>(
-    set: BTreeSet<&'output [Input]>,
-) -> Parser<'input, 'output, AnySeq<'output, Input>> {
+pub const fn any_seq<'platonic, 'input, Input: 'input + Ord + PrintError>(
+    set: BTreeSet<&'platonic [Input]>,
+) -> Parser<'input, AnySeq<'platonic, Input>> {
     Parser::new(AnySeq(set))
 }
 ptest! {
@@ -307,21 +303,56 @@ ptest! {
     }
 }
 
+/// Parse if possible; otherwise, don't move.
+#[derive(Debug)]
+pub struct Optional<'input, Fallible: Parse<'input>>(Parser<'input, Fallible>);
+impl<'input, Fallible: Parse<'input>> Parse<'input> for Optional<'input, Fallible> {
+    type Input = Fallible::Input;
+    type Output = Option<Fallible::Output>;
+    #[inline(always)]
+    fn parse(
+        &self,
+        input: &'input [Self::Input],
+    ) -> Result<(Self::Output, &'input [Self::Input]), ParseError> {
+        Ok(self
+            .0
+            .partial(input)
+            .map_or_else(|_| (None, input), |(parsed, etc)| (Some(parsed), etc)))
+    }
+}
+/// Parse if possible; otherwise, don't move.
+#[inline(always)]
+#[must_use]
+pub const fn optional<'input, Fallible: Parse<'input>>(
+    fallible: Parser<'input, Fallible>,
+) -> Parser<'input, Optional<'input, Fallible>> {
+    Parser::new(Optional(fallible))
+}
+ptest! {
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn prop_optional(input: [u8; 1]) {
+        let parser = optional(lowercase());
+        let c = input.first().unwrap();
+        if c.is_ascii_lowercase() {
+            assert_eq!(parser.partial(&input), Ok((Some(c), &[][..])));
+        } else {
+            assert_eq!(parser.partial(&input), Ok((None, &input[..])));
+        }
+    }
+}
+
 /// Continue parsing while a predicate holds. Return a contiguous slice referencing the section of input that held.
 #[derive(Debug)]
-pub struct ParseWhile<'output, Input: PrintError, Predicate: Fn(&'output Input) -> bool>(
+pub struct ParseWhile<Input: PrintError, Predicate: Fn(&Input) -> bool>(
     Predicate,
-    PhantomData<&'output Input>,
+    PhantomData<Input>,
 );
-impl<
-        'input: 'output,
-        'output,
-        Input: 'output + PrintError,
-        Predicate: Fn(&'output Input) -> bool,
-    > Parse<'input, 'output> for ParseWhile<'output, Input, Predicate>
+impl<'input, Input: 'input + PrintError, Predicate: Fn(&Input) -> bool> Parse<'input>
+    for ParseWhile<Input, Predicate>
 {
     type Input = Input;
-    type Output = &'output [Input];
+    type Output = &'input [Input];
     #[inline(always)]
     fn parse(
         &self,
@@ -338,14 +369,9 @@ impl<
 /// Match any of a set of sequences of options. Set represented as a binary tree for efficient lookup.
 #[inline(always)]
 #[must_use]
-pub const fn parse_while<
-    'input: 'output,
-    'output,
-    Input: 'output + PrintError,
-    Predicate: Fn(&'output Input) -> bool,
->(
+pub const fn parse_while<'input, Input: 'input + PrintError, Predicate: Fn(&Input) -> bool>(
     predicate: Predicate,
-) -> Parser<'input, 'output, ParseWhile<'output, Input, Predicate>> {
+) -> Parser<'input, ParseWhile<Input, Predicate>> {
     Parser::new(ParseWhile(predicate, PhantomData))
 }
 ptest! {
@@ -363,11 +389,52 @@ ptest! {
     }
 }
 
+/// Continue parsing as long as we can. Return a contiguous slice referencing the section of input that successfully parsed.
+#[derive(Debug)]
+pub struct Runaway<'input, Each: Parse<'input>>(Parser<'input, Each>);
+impl<'input, Each: Parse<'input>> Parse<'input> for Runaway<'input, Each> {
+    type Input = Each::Input;
+    type Output = Vec<Each::Output>;
+    #[inline(always)]
+    fn parse(
+        &self,
+        input: &'input [Self::Input],
+    ) -> Result<(Self::Output, &'input [Self::Input]), ParseError> {
+        let mut results = vec![];
+        let mut remaining = input;
+        while let Ok((parsed, etc)) = self.0.partial(remaining) {
+            results.push(parsed);
+            remaining = etc;
+        }
+        Ok((results, remaining))
+    }
+}
+/// Match any of a set of sequences of options. Set represented as a binary tree for efficient lookup.
+#[inline(always)]
+#[must_use]
+pub const fn runaway<'input, Each: Parse<'input>>(
+    each: Parser<'input, Each>,
+) -> Parser<'input, Runaway<'input, Each>> {
+    Parser::new(Runaway(each))
+}
+ptest! {
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn prop_runaway(input: Vec<u8>) {
+        let (pass, etc) = runaway(lowercase()).partial(&input).unwrap();
+        for x in pass {
+            assert!(x.is_ascii_lowercase());
+        }
+        if let Some(x) = etc.first() {
+            assert!(!x.is_ascii_lowercase());
+        }
+    }
+}
+
 /// Match zero or more whitespace characters and return a reference to their contiguous slice.
 #[inline(always)]
 #[must_use]
-pub fn whitespace<'input: 'output, 'output>(
-) -> Parser<'input, 'output, impl Parse<'input, 'output, Input = u8>> {
+pub fn whitespace<'input>() -> Parser<'input, impl Parse<'input, Input = u8>> {
     parse_while(|c| matches!(c, &b' ' | &b'\t' | &b'\r' | &b'\n'))
 }
 // any test would follow tautologically from the definition of `parse_while`
@@ -375,8 +442,7 @@ pub fn whitespace<'input: 'output, 'output>(
 /// Match any lowercase letter and return a reference to it.
 #[inline(always)]
 #[must_use]
-pub fn lowercase<'input: 'output, 'output>(
-) -> Parser<'input, 'output, impl Parse<'input, 'output, Input = u8, Output = &'output u8>> {
+pub fn lowercase<'input>() -> Parser<'input, impl Parse<'input, Input = u8, Output = &'input u8>> {
     satisfy(u8::is_ascii_lowercase, |x| {
         format!(
             "Expected a lowercase letter but found '{:}'",
@@ -395,8 +461,7 @@ ptest! {
 /// Match any uppercase letter and return a reference to it.
 #[inline(always)]
 #[must_use]
-pub fn uppercase<'input: 'output, 'output>(
-) -> Parser<'input, 'output, impl Parse<'input, 'output, Input = u8, Output = &'output u8>> {
+pub fn uppercase<'input>() -> Parser<'input, impl Parse<'input, Input = u8, Output = &'input u8>> {
     satisfy(u8::is_ascii_uppercase, |x| {
         format!(
             "Expected an uppercase letter but found '{:}'",
@@ -412,66 +477,151 @@ ptest! {
     }
 }
 
-/// Parse a comma-separated list of elements determined by the parser passed in here.
+/// Parse a punctuated (e.g. comma-separated) list of elements determined by the parsers passed in here.
 #[derive(Debug)]
-pub struct CommaSeparated<
-    'input,
-    'output,
-    Output,
-    ElementParser: Parse<'input, 'output, Input = u8, Output = Output>,
->(
-    Parser<'input, 'output, ElementParser>,
-    PhantomData<&'output Output>,
-);
-impl<
-        'input,
-        'output,
-        Output: 'output,
-        ElementParser: Parse<'input, 'output, Input = u8, Output = Output>,
-    > Parse<'input, 'output> for CommaSeparated<'input, 'output, Output, ElementParser>
+pub struct Punctuated<'input, Element: Parse<'input>, Punct: Parse<'input, Input = Element::Input>>
 {
-    type Input = u8;
-    type Output = Vec<Output>;
+    element: Parser<'input, Element>,
+    punct: Parser<'input, Punct>,
+    allow_trailing: bool,
+}
+impl<'input, Element: Parse<'input>, Punct: Parse<'input, Input = Element::Input>> Parse<'input>
+    for Punctuated<'input, Element, Punct>
+{
+    type Input = Punct::Input;
+    type Output = Vec<Element::Output>;
     #[inline(always)]
     fn parse(
         &self,
         input: &'input [Self::Input],
     ) -> Result<(Self::Output, &'input [Self::Input]), ParseError> {
-        let mut results = vec![];
-        let mut long_term_etc = whitespace().partial(input)?.1;
-        while let Ok((out, etc)) = self.0.partial(long_term_etc) {
+        let (first, mut remaining) = self.element.partial(input)?;
+        let mut results = vec![first];
+        while let Ok(Ok((out, etc))) = {
+            self.punct
+                .partial(remaining)
+                .map(|(_, etc)| self.element.partial(etc))
+        } {
             results.push(out);
-            long_term_etc = if let Ok((_, the_rest)) =
-                (exact(&b',').discard_right(whitespace())).partial(etc)
-            {
-                the_rest
-            } else {
-                return Ok((results, etc));
-            };
+            remaining = etc;
         }
-        Ok((results, long_term_etc))
+        if self.allow_trailing {
+            if let Ok((_, after_trailing)) = self.punct.partial(remaining) {
+                remaining = after_trailing;
+            }
+        }
+        Ok((results, remaining))
     }
 }
 /// Match any of a set of sequences of options. Set represented as a binary tree for efficient lookup.
 #[inline(always)]
 #[must_use]
-pub const fn comma_separated<
+pub const fn punctuated<
     'input,
-    'output,
-    Output: 'output,
-    ElementParser: Parse<'input, 'output, Input = u8, Output = Output>,
+    Element: Parse<'input>,
+    Punct: Parse<'input, Input = Element::Input>,
 >(
-    element_parser: ElementParser,
-) -> Parser<'input, 'output, CommaSeparated<'input, 'output, Output, ElementParser>> {
-    Parser::new(CommaSeparated(Parser::new(element_parser), PhantomData))
+    element: Parser<'input, Element>,
+    punct: Parser<'input, Punct>,
+    allow_trailing: bool,
+) -> Parser<'input, Punctuated<'input, Element, Punct>> {
+    Parser::new(Punctuated {
+        element,
+        punct,
+        allow_trailing,
+    })
 }
+
 // test covered in src/tests.rs
+/// Match any of a set of sequences of options. Set represented as a binary tree for efficient lookup.
+#[inline(always)]
+#[must_use]
+pub fn comma_separated<'input, Element: Parse<'input, Input = u8>>(
+    element: Parser<'input, Element>,
+    allow_trailing: bool,
+) -> Parser<
+    'input,
+    DiscardLeft<
+        'input,
+        impl Parse<'input, Input = u8>,
+        Punctuated<
+            'input,
+            DiscardRight<'input, Element, impl Parse<'input, Input = u8>>,
+            impl Parse<'input, Input = u8>,
+        >,
+    >,
+> {
+    whitespace()
+        >> punctuated(
+            element << whitespace(),
+            exact(&b',') << whitespace(),
+            allow_trailing,
+        )
+}
+
+/// Parse a punctuated (e.g. by mathematical operators) list of elements determined by the parsers passed in here.
+#[derive(Debug)]
+pub struct PunctuatedMeaningfully<
+    'input,
+    Element: Parse<'input>,
+    Punct: Parse<'input, Input = Element::Input>,
+> {
+    element: Parser<'input, Element>,
+    punct: Parser<'input, Punct>,
+    allow_trailing: bool,
+}
+impl<'input, Element: Parse<'input>, Punct: Parse<'input, Input = Element::Input>> Parse<'input>
+    for PunctuatedMeaningfully<'input, Element, Punct>
+{
+    type Input = Punct::Input;
+    type Output = (Element::Output, Vec<(Punct::Output, Element::Output)>);
+    #[inline(always)]
+    fn parse(
+        &self,
+        input: &'input [Self::Input],
+    ) -> Result<(Self::Output, &'input [Self::Input]), ParseError> {
+        let (head, mut remaining) = self.element.partial(input)?;
+        let mut tail = vec![];
+        while let Ok((p, Ok((e, etc)))) = self
+            .punct
+            .partial(remaining)
+            .map(|(parsed, etc)| (parsed, self.element.partial(etc)))
+        {
+            tail.push((p, e));
+            remaining = etc;
+        }
+        if self.allow_trailing {
+            if let Ok((_, after_trailing)) = self.punct.partial(remaining) {
+                remaining = after_trailing;
+            }
+        }
+        Ok(((head, tail), remaining))
+    }
+}
+/// Match any of a set of sequences of options. Set represented as a binary tree for efficient lookup.
+#[inline(always)]
+#[must_use]
+pub const fn punctuated_meaningfully<
+    'input,
+    Element: Parse<'input>,
+    Punct: Parse<'input, Input = Element::Input>,
+>(
+    element: Parser<'input, Element>,
+    punct: Parser<'input, Punct>,
+    allow_trailing: bool,
+) -> Parser<'input, PunctuatedMeaningfully<'input, Element, Punct>> {
+    Parser::new(PunctuatedMeaningfully {
+        element,
+        punct,
+        allow_trailing,
+    })
+}
 
 /// Match a `snake_case` term.
 #[inline(always)]
 #[must_use]
-pub fn snake_case<'input: 'output, 'output>(
-) -> Parser<'input, 'output, impl Parse<'input, 'output, Input = u8, Output = &'output [u8]>> {
+pub fn snake_case<'input>() -> Parser<'input, impl Parse<'input, Input = u8, Output = &'input [u8]>>
+{
     parse_while(|x| {
         (lowercase() | exact(&b'_'))
             .partial(core::slice::from_ref(x))
@@ -489,8 +639,8 @@ ptest! {
 /// Match a `SCREAMING_CASE` term.
 #[inline(always)]
 #[must_use]
-pub fn screaming_case<'input: 'output, 'output>(
-) -> Parser<'input, 'output, impl Parse<'input, 'output, Input = u8, Output = &'output [u8]>> {
+pub fn screaming_case<'input>(
+) -> Parser<'input, impl Parse<'input, Input = u8, Output = &'input [u8]>> {
     parse_while(|x| {
         (uppercase() | exact(&b'_'))
             .partial(core::slice::from_ref(x))
@@ -508,18 +658,71 @@ ptest! {
 /// Match a single digit.
 #[inline(always)]
 #[must_use]
-pub fn digit<'input>(
-) -> Parser<'input, 'static, impl Parse<'input, 'static, Input = u8, Output = u8>> {
+pub fn digit<'input>() -> Parser<'input, impl Parse<'input, Input = u8, Output = u8>> {
     satisfy(u8::is_ascii_digit, |x| {
         format!(
-            "Expected an uppercase letter but found '{:}'",
+            "Expected an uppercase letter but found '{:}' (ASCII #{x:})",
             char::from(*x)
         )
     })
     .pipe(|x| {
         x.checked_sub(b'0').ok_or_else(|| {
-            format!("Found an ASCII digit but couldn't subtract '0' from it. Digit was '{x:}'.")
+            format!(
+                "Found an ASCII digit but couldn't subtract '0' from it. Digit was '{:}' (ASCII #{x:}).",
+                char::from(*x)
+            )
         })
+    })
+}
+
+/// Match a base-ten unsigned integer.
+#[inline(always)]
+#[must_use]
+pub fn unsigned_integer<'input>() -> Parser<'input, impl Parse<'input, Input = u8, Output = usize>>
+{
+    runaway(digit()).pipe(move |s| {
+        s.into_iter().fold(Ok(0), |acc, digit| {
+            acc.map_or_else(
+                |e| Err(e),
+                |x: usize| match x.checked_mul(10).map(|x0| x0.checked_add(digit.into())) {
+                    Some(Some(y)) => Ok(y),
+                    _ => Err(String::from(
+                        "Parsing error: parsed integer that would overflow a Rust `usize`",
+                    )),
+                },
+            )
+        })
+    })
+}
+
+/// Match a base-ten signed integer.
+#[inline(always)]
+#[must_use]
+pub fn signed_integer<'input>() -> Parser<'input, impl Parse<'input, Input = u8, Output = isize>> {
+    (optional(exact(&b'-'))
+        & runaway(digit()).pipe(move |s| {
+            s.into_iter().fold(Ok(0), |acc, digit| {
+                acc.map_or_else(
+                    |e| Err(e),
+                    |x: isize| match x.checked_mul(10).map(|x0| x0.checked_add(digit.into())) {
+                        Some(Some(y)) => Ok(y),
+                        _ => Err(String::from(
+                            "Parsing error: parsed integer that would overflow a Rust `isize`",
+                        )),
+                    },
+                )
+            })
+        }))
+    .pipe(|(maybe_neg, abs)| {
+        if maybe_neg.is_some() {
+            abs.checked_neg().ok_or_else(|| {
+                String::from(
+                    "Parsing error: parsed a negative integer that would overflow a Rust `isize`",
+                )
+            })
+        } else {
+            Ok(abs)
+        }
     })
 }
 
@@ -1052,67 +1255,25 @@ pub fn comma_separated<
     })
 }
 
+*/
+
 /// Operator-precedence parsing, e.g. for infix math.
 pub mod precedence {
     #[allow(clippy::wildcard_imports)]
     use super::*;
 
-    #[cfg(feature = "nightly")]
     /// Parse binary operations without grouping them by precedence into a tree: just return a list of operators and things to the right of them.
-    #[inline(always)]
-    #[must_use]
-    #[allow(clippy::type_complexity)]
-    pub fn raw_binops<
-        'input,
-        'parser,
-        Output,
-        Call: 'parser + FnOnce(&'input [u8]) -> result::Result<(Output, &'input [u8])>,
-        Lazy: 'parser + Fn() -> Parser<'input, 'parser, u8, Output, Call>,
-    >(
-        primary: Lazy,
-        operators: &'parser BTreeSet<&'input [u8]>,
+    pub fn raw_binary_ops<'platonic, 'input, Primary: Parse<'input, Input = u8>>(
+        primary: Parser<'input, Primary>,
+        ops: BTreeSet<&'platonic [u8]>,
     ) -> Parser<
         'input,
-        'parser,
-        u8,
-        (Output, Vec<(&'input [u8], Output)>),
-        impl 'parser
-            + FnOnce(
-                &'input [u8],
-            )
-                -> result::Result<((Output, Vec<(&'input [u8], Output)>), &'input [u8])>,
+        PunctuatedMeaningfully<
+            'input,
+            DiscardRight<'input, Primary, impl Parse<'input, Input = u8>>,
+            DiscardRight<'input, AnySeq<'platonic, u8>, impl Parse<'input, Input = u8>>,
+        >,
     > {
-        Parser::new(move |slice| {
-            let (first, first_etc) = primary().once(slice)?;
-            let (rest, etc) =
-                parse_while(&|| whitespace() >> any_seq(operators) & whitespace() >> primary())
-                    .once(first_etc)?;
-            Ok(((first, rest), etc))
-        })
-    }
-
-    #[cfg(not(feature = "nightly"))]
-    /// Parse binary operations without grouping them by precedence into a tree: just return a list of operators and things to the right of them.
-    #[inline(always)]
-    #[must_use]
-    #[allow(clippy::type_complexity)]
-    pub fn raw_binops<
-        'input,
-        'parser,
-        Output: 'parser,
-        Lazy: 'parser + Fn() -> Parser<'input, 'parser, u8, Output>,
-    >(
-        primary: Lazy,
-        operators: &'parser BTreeSet<&'input [u8]>,
-    ) -> Parser<'input, 'parser, u8, (Output, Vec<(&'input [u8], Output)>)> {
-        Parser::new(move |slice| {
-            let (first, first_etc) = primary().once(slice)?;
-            let (rest, etc) =
-                parse_while(|| whitespace() >> any_seq(operators) & whitespace() >> primary())
-                    .once(first_etc)?;
-            Ok(((first, rest), etc))
-        })
+        punctuated_meaningfully(primary << whitespace(), any_seq(ops) << whitespace(), false)
     }
 }
-
-*/

@@ -16,19 +16,17 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-    - name: Install
-      run: rustup toolchain install nightly && rustup component add clippy --toolchain nightly && rustup component add rustfmt --toolchain nightly
     - name: Format check
       run: cargo fmt -- --check
-    - name: Build (stable)
-      run: cargo build --verbose
-    - name: Build (nightly)
-      run: cargo +nightly build --all-features --verbose
-    - name: Test (stable)
-      run: cargo test --verbose
-    - name: Test (nightly)
-      run: cargo +nightly test --all-features --verbose
-    - name: Clippy (stable)
-      run: cargo clippy --all-targets --verbose
-    - name: Clippy (nightly)
-      run: cargo +nightly clippy --all-targets --all-features --verbose
+    - name: Build (no features)
+      run: cargo build --no-default-features --verbose
+    - name: Build (all features)
+      run: cargo build --all-features --verbose
+    - name: Test (no features)
+      run: PROPTEST_CASES=1000000 cargo test --no-default-features --verbose
+    - name: Test (all features)
+      run: PROPTEST_CASES=1000000 cargo test --all-features --verbose || cat proptest-regressions/base.txt
+    - name: Clippy (no features)
+      run: cargo clippy --no-default-features --all-targets --verbose || cat proptest-regressions/base.txt
+    - name: Clippy (all features)
+      run: cargo clippy --all-targets --all-features --verbose

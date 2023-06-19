@@ -90,11 +90,8 @@ extern crate alloc;
 pub mod base;
 pub mod print_error;
 
-// FIXME
-/*
 #[cfg(test)]
 mod test;
-*/
 
 /// Parsing error: both a message and where it was, via accepting the length of input _after_ the error.
 #[allow(clippy::exhaustive_structs)]
@@ -103,27 +100,27 @@ pub struct ParseError {
     /// Message helpfully describing this error.
     pub message: String,
     /// Length of input _after_ this error, or `None` if we ran out of input (would be -1).
-    pub etc: Option<usize>,
+    pub not_yet_parsed: Option<usize>,
 }
 
 /// Immediately return with an error. The second argument requests the slice of input _after_ this error, so we can deduce where it happened.
 #[macro_export]
 macro_rules! bail {
-    ($fmsg:expr, $etc:expr) => {
+    ($fmsg:expr, $not_yet_parsed:expr) => {
         return Err(ParseError {
             message: ::alloc::format!($fmsg),
-            etc: Some(($etc).len()),
+            not_yet_parsed: Some($not_yet_parsed.len()),
         })
     };
 }
 
 /// Parse a slice of `Input`s into an `Output`.
-pub trait Parse<'input, 'output> {
+pub trait Parse<'input> {
     /// Raw type, of which we parse a slice. E.g. `u8` if we want to parse a string of bytes, not `&[u8]`: the slice is implied.
     type Input: print_error::PrintError;
 
     /// Output of parsing a slice of `Input`s.
-    type Output: 'output;
+    type Output;
 
     /// Parse exactly one item of input; don't continue without further instruction.
     /// # Errors
@@ -135,17 +132,13 @@ pub trait Parse<'input, 'output> {
 }
 
 /// Wrapper around a parser to work with the orphan rule.
-#[derive(Debug)]
-pub struct Parser<'input, 'output, Inside: Parse<'input, 'output>>(
-    Inside,
-    PhantomData<&'input ()>,
-    PhantomData<&'output ()>,
-);
-impl<'input, 'output, Inside: Parse<'input, 'output>> Parser<'input, 'output, Inside> {
+#[derive(Clone, Debug)]
+pub struct Parser<'input, Inside: Parse<'input>>(Inside, PhantomData<&'input ()>);
+impl<'input, Inside: Parse<'input>> Parser<'input, Inside> {
     /// Create a Parser without worrying about workarounds like `PhantomData`.
     #[inline(always)]
     pub const fn new(inside: Inside) -> Self {
-        Self(inside, PhantomData, PhantomData)
+        Self(inside, PhantomData)
     }
     /// Parse exactly one item of input; don't continue without further instruction.
     /// # Errors
@@ -169,10 +162,10 @@ impl<'input, 'output, Inside: Parse<'input, 'output>> Parser<'input, 'output, In
                 return Err(<Inside::Input as print_error::PrintError>::pretty_error(
                     err.message,
                     input,
-                    if let Some(i) = err.etc {
-                        match i.checked_add(1).map(|ii| input.len().checked_sub(ii)) {
-                            Some(Some(s)) => Some(s),
-                            _ => return Err(String::from("Internal parsing error: `parse` received an `etc` greater than the slice itself")),
+                    if let Some(i) = err.not_yet_parsed {
+                        match input.len().checked_sub(i) {
+                            s @ Some(_) => s,
+                            None => return Err(String::from("Internal parsing error: `parse` received an `etc` greater than the slice itself")),
                         }
                     } else {
                         None
@@ -187,7 +180,7 @@ impl<'input, 'output, Inside: Parse<'input, 'output>> Parser<'input, 'output, In
                 String::from("Unparsed input remains after parsing what should have been everything"),
                 input,
                 match input.len().checked_sub(etc.len()){
-                    some @ Some(_) => some,
+                    s @ Some(_) => s,
                     None => return Err(String::from("Internal parsing error: `parse` received an `etc` greater than the slice itself")),
                 },
             ))
@@ -207,101 +200,82 @@ impl<'input, 'output, Inside: Parse<'input, 'output>> Parser<'input, 'output, In
     /// Consume this parser and integrate it into a two-part parser that returns only the second result.
     #[inline(always)]
     #[must_use]
-    pub const fn discard_left<'routput, Right: Parse<'input, 'routput, Input = Inside::Input>>(
+    pub const fn discard_left<Right: Parse<'input, Input = Inside::Input>>(
         self,
-        right: Parser<'input, 'routput, Right>,
-    ) -> Parser<'input, 'routput, DiscardLeft<'input, 'output, 'routput, Inside, Right>> {
+        right: Parser<'input, Right>,
+    ) -> Parser<'input, DiscardLeft<'input, Inside, Right>> {
         Parser::new(DiscardLeft::new(self, right))
     }
 
     /// Consume this parser and integrate it into a two-part parser that returns only the first result.
     #[inline(always)]
     #[must_use]
-    pub const fn discard_right<'routput, Right: Parse<'input, 'routput, Input = Inside::Input>>(
+    pub const fn discard_right<Right: Parse<'input, Input = Inside::Input>>(
         self,
-        right: Parser<'input, 'routput, Right>,
-    ) -> Parser<'input, 'output, DiscardRight<'input, 'output, 'routput, Inside, Right>> {
+        right: Parser<'input, Right>,
+    ) -> Parser<'input, DiscardRight<'input, Inside, Right>> {
         Parser::new(DiscardRight::new(self, right))
     }
 
     /// Consume this parser and integrate it into a two-part parser that returns both results as a tuple.
     #[inline(always)]
     #[must_use]
-    pub const fn both<Right: Parse<'input, 'output, Input = Inside::Input>>(
+    pub const fn both<Right: Parse<'input, Input = Inside::Input>>(
         self,
-        right: Parser<'input, 'output, Right>,
-    ) -> Parser<'input, 'output, Both<'input, 'output, Inside, Right>> {
+        right: Parser<'input, Right>,
+    ) -> Parser<'input, Both<'input, Inside, Right>> {
         Parser::new(Both::new(self, right))
     }
 
     /// Consume this parser and integrate it into a two-part parser that returns the first one to succeed, or the second error if neither succeed.
     #[inline(always)]
     #[must_use]
-    pub const fn either<
-        Right: Parse<'input, 'output, Input = Inside::Input, Output = Inside::Output>,
-    >(
+    pub const fn either<Right: Parse<'input, Input = Inside::Input, Output = Inside::Output>>(
         self,
-        right: Parser<'input, 'output, Right>,
-    ) -> Parser<'input, 'output, Either<'input, 'output, Inside, Right>> {
+        right: Parser<'input, Right>,
+    ) -> Parser<'input, Either<'input, Inside, Right>> {
         Parser::new(Either::new(self, right))
     }
 
     /// Consume this parser and integrate it into a two-part parser that pipes parsed output into a normal function and returns its output.
     #[inline(always)]
     #[must_use]
-    pub const fn pipe<
-        'final_output,
-        FinalOutput: 'final_output + 'output,
-        Right: Fn(Inside::Output) -> Result<FinalOutput, String>,
-    >(
+    pub const fn pipe<FinalOutput, Right: Fn(Inside::Output) -> Result<FinalOutput, String>>(
         self,
         right: Right,
-    ) -> Parser<
-        'input,
-        'final_output,
-        Pipe<'input, 'output, 'final_output, Inside, FinalOutput, Right>,
-    > {
+    ) -> Parser<'input, Pipe<'input, Inside, FinalOutput, Right>> {
         Parser::new(Pipe::new(self, right))
+    }
+}
+impl<'input, Inside: Parse<'input>> Parse<'input> for Parser<'input, Inside> {
+    type Input = Inside::Input;
+    type Output = Inside::Output;
+    #[inline(always)]
+    fn parse(
+        &self,
+        input: &'input [Self::Input],
+    ) -> Result<(Self::Output, &'input [Self::Input]), ParseError> {
+        self.0.parse(input)
     }
 }
 
 /// Perform two actions in order and discard the result of the first, returning the result of the second.
 #[derive(Debug)]
-pub struct DiscardLeft<
-    'input,
-    'loutput,
-    'routput,
-    Left: Parse<'input, 'loutput, Input = Right::Input>,
-    Right: Parse<'input, 'routput>,
->(
-    Parser<'input, 'loutput, Left>,
-    Parser<'input, 'routput, Right>,
-    PhantomData<&'loutput ()>,
+pub struct DiscardLeft<'input, Left: Parse<'input, Input = Right::Input>, Right: Parse<'input>>(
+    Parser<'input, Left>,
+    Parser<'input, Right>,
 );
-impl<
-        'input,
-        'loutput,
-        'routput,
-        Left: Parse<'input, 'loutput, Input = Right::Input>,
-        Right: Parse<'input, 'routput>,
-    > DiscardLeft<'input, 'loutput, 'routput, Left, Right>
+impl<'input, Left: Parse<'input, Input = Right::Input>, Right: Parse<'input>>
+    DiscardLeft<'input, Left, Right>
 {
     /// Create an instance without worrying about workarounds like `PhantomData`.
     #[inline(always)]
-    pub const fn new(
-        left: Parser<'input, 'loutput, Left>,
-        right: Parser<'input, 'routput, Right>,
-    ) -> Self {
-        Self(left, right, PhantomData)
+    pub const fn new(left: Parser<'input, Left>, right: Parser<'input, Right>) -> Self {
+        Self(left, right)
     }
 }
-impl<
-        'input,
-        'loutput,
-        'routput,
-        Left: Parse<'input, 'loutput, Input = Right::Input>,
-        Right: Parse<'input, 'routput>,
-    > Parse<'input, 'routput> for DiscardLeft<'input, 'loutput, 'routput, Left, Right>
+impl<'input, Left: Parse<'input, Input = Right::Input>, Right: Parse<'input>> Parse<'input>
+    for DiscardLeft<'input, Left, Right>
 {
     type Input = Right::Input;
     type Output = Right::Output;
@@ -313,58 +287,33 @@ impl<
         self.1.partial(self.0.partial(input)?.1)
     }
 }
-impl<
-        'input,
-        'loutput,
-        'routput,
-        Left: Parse<'input, 'loutput, Input = Right::Input>,
-        Right: Parse<'input, 'routput>,
-    > ::core::ops::Shr<Parser<'input, 'routput, Right>> for Parser<'input, 'loutput, Left>
+impl<'input, Left: Parse<'input, Input = Right::Input>, Right: Parse<'input>>
+    ::core::ops::Shr<Parser<'input, Right>> for Parser<'input, Left>
 {
-    type Output = Parser<'input, 'routput, DiscardLeft<'input, 'loutput, 'routput, Left, Right>>;
+    type Output = Parser<'input, DiscardLeft<'input, Left, Right>>;
     #[inline(always)]
-    fn shr(self, rhs: Parser<'input, 'routput, Right>) -> Self::Output {
+    fn shr(self, rhs: Parser<'input, Right>) -> Self::Output {
         self.discard_left(rhs)
     }
 }
 
 /// Perform two actions in order and discard the result of the second, returning the result of the first.
 #[derive(Debug)]
-pub struct DiscardRight<
-    'input,
-    'loutput,
-    'routput,
-    Left: Parse<'input, 'loutput>,
-    Right: Parse<'input, 'routput, Input = Left::Input>,
->(
-    Parser<'input, 'loutput, Left>,
-    Parser<'input, 'routput, Right>,
-    PhantomData<&'loutput ()>,
+pub struct DiscardRight<'input, Left: Parse<'input>, Right: Parse<'input, Input = Left::Input>>(
+    Parser<'input, Left>,
+    Parser<'input, Right>,
 );
-impl<
-        'input,
-        'loutput,
-        'routput,
-        Left: Parse<'input, 'loutput>,
-        Right: Parse<'input, 'routput, Input = Left::Input>,
-    > DiscardRight<'input, 'loutput, 'routput, Left, Right>
+impl<'input, Left: Parse<'input>, Right: Parse<'input, Input = Left::Input>>
+    DiscardRight<'input, Left, Right>
 {
     /// Create an instance without worrying about workarounds like `PhantomData`.
     #[inline(always)]
-    pub const fn new(
-        left: Parser<'input, 'loutput, Left>,
-        right: Parser<'input, 'routput, Right>,
-    ) -> Self {
-        Self(left, right, PhantomData)
+    pub const fn new(left: Parser<'input, Left>, right: Parser<'input, Right>) -> Self {
+        Self(left, right)
     }
 }
-impl<
-        'input,
-        'loutput,
-        'routput,
-        Left: Parse<'input, 'loutput>,
-        Right: Parse<'input, 'routput, Input = Left::Input>,
-    > Parse<'input, 'loutput> for DiscardRight<'input, 'loutput, 'routput, Left, Right>
+impl<'input, Left: Parse<'input>, Right: Parse<'input, Input = Left::Input>> Parse<'input>
+    for DiscardRight<'input, Left, Right>
 {
     type Input = Left::Input;
     type Output = Left::Output;
@@ -378,55 +327,33 @@ impl<
         Ok((result, etc))
     }
 }
-impl<
-        'input,
-        'loutput,
-        'routput,
-        Left: Parse<'input, 'loutput>,
-        Right: Parse<'input, 'routput, Input = Left::Input>,
-    > ::core::ops::Shl<Parser<'input, 'routput, Right>> for Parser<'input, 'loutput, Left>
+impl<'input, Left: Parse<'input>, Right: Parse<'input, Input = Left::Input>>
+    ::core::ops::Shl<Parser<'input, Right>> for Parser<'input, Left>
 {
-    type Output = Parser<'input, 'loutput, DiscardRight<'input, 'loutput, 'routput, Left, Right>>;
+    type Output = Parser<'input, DiscardRight<'input, Left, Right>>;
     #[inline(always)]
-    fn shl(self, rhs: Parser<'input, 'routput, Right>) -> Self::Output {
+    fn shl(self, rhs: Parser<'input, Right>) -> Self::Output {
         self.discard_right(rhs)
     }
 }
 
 /// Perform two actions in order and return both of their results as a tuple.
 #[derive(Debug)]
-pub struct Both<
-    'input,
-    'output,
-    Left: Parse<'input, 'output>,
-    Right: Parse<'input, 'output, Input = Left::Input>,
->(
-    Parser<'input, 'output, Left>,
-    Parser<'input, 'output, Right>,
-    PhantomData<&'output ()>,
+pub struct Both<'input, Left: Parse<'input>, Right: Parse<'input, Input = Left::Input>>(
+    Parser<'input, Left>,
+    Parser<'input, Right>,
 );
-impl<
-        'input,
-        'output,
-        Left: Parse<'input, 'output>,
-        Right: Parse<'input, 'output, Input = Left::Input>,
-    > Both<'input, 'output, Left, Right>
+impl<'input, Left: Parse<'input>, Right: Parse<'input, Input = Left::Input>>
+    Both<'input, Left, Right>
 {
     /// Create an instance without worrying about workarounds like `PhantomData`.
     #[inline(always)]
-    pub const fn new(
-        left: Parser<'input, 'output, Left>,
-        right: Parser<'input, 'output, Right>,
-    ) -> Self {
-        Self(left, right, PhantomData)
+    pub const fn new(left: Parser<'input, Left>, right: Parser<'input, Right>) -> Self {
+        Self(left, right)
     }
 }
-impl<
-        'input,
-        'output,
-        Left: Parse<'input, 'output>,
-        Right: Parse<'input, 'output, Input = Left::Input>,
-    > Parse<'input, 'output> for Both<'input, 'output, Left, Right>
+impl<'input, Left: Parse<'input>, Right: Parse<'input, Input = Left::Input>> Parse<'input>
+    for Both<'input, Left, Right>
 {
     type Input = Left::Input;
     type Output = (Left::Output, Right::Output);
@@ -440,16 +367,12 @@ impl<
         Ok(((left, right), etc))
     }
 }
-impl<
-        'input,
-        'output,
-        Left: Parse<'input, 'output>,
-        Right: Parse<'input, 'output, Input = Left::Input>,
-    > ::core::ops::BitAnd<Parser<'input, 'output, Right>> for Parser<'input, 'output, Left>
+impl<'input, Left: Parse<'input>, Right: Parse<'input, Input = Left::Input>>
+    ::core::ops::BitAnd<Parser<'input, Right>> for Parser<'input, Left>
 {
-    type Output = Parser<'input, 'output, Both<'input, 'output, Left, Right>>;
+    type Output = Parser<'input, Both<'input, Left, Right>>;
     #[inline(always)]
-    fn bitand(self, rhs: Parser<'input, 'output, Right>) -> Self::Output {
+    fn bitand(self, rhs: Parser<'input, Right>) -> Self::Output {
         self.both(rhs)
     }
 }
@@ -458,36 +381,26 @@ impl<
 #[derive(Debug)]
 pub struct Either<
     'input,
-    'output,
-    Left: Parse<'input, 'output>,
-    Right: Parse<'input, 'output, Input = Left::Input, Output = Left::Output>,
->(
-    Parser<'input, 'output, Left>,
-    Parser<'input, 'output, Right>,
-    PhantomData<&'output ()>,
-);
+    Left: Parse<'input>,
+    Right: Parse<'input, Input = Left::Input, Output = Left::Output>,
+>(Parser<'input, Left>, Parser<'input, Right>);
 impl<
         'input,
-        'output,
-        Left: Parse<'input, 'output>,
-        Right: Parse<'input, 'output, Input = Left::Input, Output = Left::Output>,
-    > Either<'input, 'output, Left, Right>
+        Left: Parse<'input>,
+        Right: Parse<'input, Input = Left::Input, Output = Left::Output>,
+    > Either<'input, Left, Right>
 {
     /// Create an instance without worrying about workarounds like `PhantomData`.
     #[inline(always)]
-    pub const fn new(
-        left: Parser<'input, 'output, Left>,
-        right: Parser<'input, 'output, Right>,
-    ) -> Self {
-        Self(left, right, PhantomData)
+    pub const fn new(left: Parser<'input, Left>, right: Parser<'input, Right>) -> Self {
+        Self(left, right)
     }
 }
 impl<
         'input,
-        'output,
-        Left: Parse<'input, 'output>,
-        Right: Parse<'input, 'output, Input = Left::Input, Output = Left::Output>,
-    > Parse<'input, 'output> for Either<'input, 'output, Left, Right>
+        Left: Parse<'input>,
+        Right: Parse<'input, Input = Left::Input, Output = Left::Output>,
+    > Parse<'input> for Either<'input, Left, Right>
 {
     type Input = Left::Input;
     type Output = Left::Output;
@@ -504,14 +417,13 @@ impl<
 }
 impl<
         'input,
-        'output,
-        Left: Parse<'input, 'output>,
-        Right: Parse<'input, 'output, Input = Left::Input, Output = Left::Output>,
-    > ::core::ops::BitOr<Parser<'input, 'output, Right>> for Parser<'input, 'output, Left>
+        Left: Parse<'input>,
+        Right: Parse<'input, Input = Left::Input, Output = Left::Output>,
+    > ::core::ops::BitOr<Parser<'input, Right>> for Parser<'input, Left>
 {
-    type Output = Parser<'input, 'output, Either<'input, 'output, Left, Right>>;
+    type Output = Parser<'input, Either<'input, Left, Right>>;
     #[inline(always)]
-    fn bitor(self, rhs: Parser<'input, 'output, Right>) -> Self::Output {
+    fn bitor(self, rhs: Parser<'input, Right>) -> Self::Output {
         self.either(rhs)
     }
 }
@@ -520,41 +432,29 @@ impl<
 #[derive(Debug)]
 pub struct Pipe<
     'input,
-    'output,
-    'final_output,
-    Left: Parse<'input, 'output>,
-    FinalOutput: 'final_output,
+    Left: Parse<'input>,
+    FinalOutput,
     Right: Fn(Left::Output) -> Result<FinalOutput, String>,
->(
-    Parser<'input, 'output, Left>,
-    Right,
-    PhantomData<&'output ()>,
-    PhantomData<&'final_output ()>,
-);
+>(Parser<'input, Left>, Right);
 impl<
         'input,
-        'output,
-        'final_output,
-        Left: Parse<'input, 'output>,
-        FinalOutput: 'final_output,
+        Left: Parse<'input>,
+        FinalOutput,
         Right: Fn(Left::Output) -> Result<FinalOutput, String>,
-    > Pipe<'input, 'output, 'final_output, Left, FinalOutput, Right>
+    > Pipe<'input, Left, FinalOutput, Right>
 {
     /// Create an instance without worrying about workarounds like `PhantomData`.
     #[inline(always)]
-    pub const fn new(left: Parser<'input, 'output, Left>, right: Right) -> Self {
-        Self(left, right, PhantomData, PhantomData)
+    pub const fn new(left: Parser<'input, Left>, right: Right) -> Self {
+        Self(left, right)
     }
 }
 impl<
         'input,
-        'output,
-        'final_output,
-        Left: Parse<'input, 'output>,
-        FinalOutput: 'output,
+        Left: Parse<'input>,
+        FinalOutput,
         Right: Fn(Left::Output) -> Result<FinalOutput, String>,
-    > Parse<'input, 'final_output>
-    for Pipe<'input, 'output, 'final_output, Left, FinalOutput, Right>
+    > Parse<'input> for Pipe<'input, Left, FinalOutput, Right>
 {
     type Input = Left::Input;
     type Output = FinalOutput;
@@ -566,19 +466,18 @@ impl<
         let (parsed, etc) = self.0.partial(input)?;
         self.1(parsed).map(|k| (k, etc)).map_err(|e| ParseError {
             message: e,
-            etc: Some(etc.len()),
+            not_yet_parsed: Some(input.len()),
         })
     }
 }
 impl<
         'input,
-        'output,
-        Left: Parse<'input, 'output>,
-        FinalOutput: 'output,
+        Left: Parse<'input>,
+        FinalOutput,
         Right: Fn(Left::Output) -> Result<FinalOutput, String>,
-    > ::core::ops::BitXor<Right> for Parser<'input, 'output, Left>
+    > ::core::ops::BitXor<Right> for Parser<'input, Left>
 {
-    type Output = Parser<'input, 'output, Pipe<'input, 'output, 'output, Left, FinalOutput, Right>>;
+    type Output = Parser<'input, Pipe<'input, Left, FinalOutput, Right>>;
     #[inline(always)]
     fn bitxor(self, rhs: Right) -> Self::Output {
         self.pipe(rhs)
@@ -586,10 +485,10 @@ impl<
 }
 
 /// Read a series of characters (actually `u8`s) into this type.
-pub trait Read<Input: print_error::PrintError> {
+pub trait Read<'input, Input: print_error::PrintError> {
     /// Parser that can translate from a slice of `Input`s to this type.
-    type InternalParser<'input>: Parse<'input, 'static, Input = Input, Output = Self>;
+    type InternalParser: Parse<'input, Input = Input, Output = Self>;
     /// Construct a parser that can translate from a slice of `Input`s to this type.
     #[must_use]
-    fn parser<'input>() -> Parser<'input, 'static, Self::InternalParser<'input>>;
+    fn parser() -> Parser<'input, Self::InternalParser>;
 }
