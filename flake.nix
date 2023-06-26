@@ -4,7 +4,7 @@
   inputs = {
     naersk = {
       inputs.nixpkgs.follows = "nixpkgs";
-      url = "github:NixOS/nmattia/naersk";
+      url = "github:nmattia/naersk";
     };
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   };
