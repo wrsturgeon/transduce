@@ -7,6 +7,7 @@
 #[allow(clippy::wildcard_imports)]
 use crate::base::*;
 
+use crate::base::lang::let_expr;
 #[cfg(feature = "alloc")]
 use crate::{Parse, Parser};
 
@@ -16,8 +17,12 @@ use alloc::{format, string::String, vec /* the macro */, vec::Vec};
 #[test]
 fn a_to_b() {
     let parser = {
-        whitespace() >> anything() << whitespace() << exact(&b'-') << exact(&b'>') << whitespace()
-            & anything() << whitespace() << end()
+        maybe_space() >> anything()
+            << maybe_space()
+            << exact(&b'-')
+            << exact(&b'>')
+            << maybe_space()
+            & anything() << maybe_space() << end()
     };
     assert_eq!(parser.parse(b"A -> B"), Ok((&b'A', &b'B')));
     assert_eq!(parser.parse(b"A->B"), Ok((&b'A', &b'B')));
@@ -128,21 +133,21 @@ mod failures {
     #[should_panic]
     #[test]
     fn multiline_fail() {
-        let _ = (anything() << whitespace() << exact(&b'!')).parse_or_panic(b"?\n?\n?");
+        let _ = (anything() << maybe_space() << exact(&b'!')).parse_or_panic(b"?\n?\n?");
     }
 
     #[should_panic]
     #[test]
     fn multiline_not_everything() {
-        let _ = (exact(&b'?') << whitespace() >> exact(&b'?')).parse_or_panic(b"?\n?\n?");
+        let _ = (exact(&b'?') << maybe_space() >> exact(&b'?')).parse_or_panic(b"?\n?\n?");
     }
 
     #[should_panic]
     #[test]
     fn multiline_oob() {
-        let _ = (anything() << whitespace()
-            & anything() << whitespace()
-            & anything() << whitespace()
+        let _ = (anything() << maybe_space()
+            & anything() << maybe_space()
+            & anything() << maybe_space()
             & anything())
         .parse_or_panic(b"?\n?\n?");
     }
@@ -207,7 +212,7 @@ mod failures {
         #[test]
         fn multiline_fail_msg() {
             assert_eq!(
-                (anything() << whitespace() << exact(&b'!')).parse(b"?\n?\n?"),
+                (anything() << maybe_space() << exact(&b'!')).parse(b"?\n?\n?"),
                 Err(String::from(concat!(
                     "\r\n",
                     "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
@@ -222,7 +227,7 @@ mod failures {
         #[test]
         fn multiline_not_everything_msg() {
             assert_eq!(
-                (exact(&b'?') << whitespace() >> exact(&b'?')).parse(b"?\n?\n?"),
+                (exact(&b'?') << maybe_space() >> exact(&b'?')).parse(b"?\n?\n?"),
                 Err(String::from(concat!(
                     "\r\n",
                     "   | \u{1b}[0;1;31mError while parsing:\u{1b}[0m\r\n",
@@ -237,9 +242,9 @@ mod failures {
         #[test]
         fn multiline_oob_msg() {
             assert_eq!(
-                (anything() << whitespace()
-                    & anything() << whitespace()
-                    & anything() << whitespace()
+                (anything() << maybe_space()
+                    & anything() << maybe_space()
+                    & anything() << maybe_space()
                     & anything())
                 .parse(b"?\n?\n?"),
                 Err(String::from(concat!(
@@ -311,4 +316,13 @@ fn parse_huge_ints() {
         return; // nothing we can do on this machine
     }
     assert!(unsigned_integer().parse(fmt_larger.as_bytes()).is_err());
+}
+
+#[test]
+fn let_exprs() {
+    let parser = let_expr(digit());
+    assert_eq!(parser.parse(b"let a = 0"), Ok((&b"a"[..], 0)));
+    assert_eq!(parser.parse(b"let a=0"), Ok((&b"a"[..], 0)));
+    assert_eq!(parser.parse(b"let   a   =   0"), Ok((&b"a"[..], 0)));
+    assert!(parser.parse(b"leta = 0").is_err());
 }

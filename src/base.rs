@@ -501,8 +501,18 @@ ptest! {
 /// Match zero or more whitespace characters and return a reference to their contiguous slice.
 #[inline(always)]
 #[must_use]
-pub fn whitespace<'input>() -> Parser<'input, impl Parse<'input, Input = u8>> {
-    parse_while(|c| matches!(c, &b' ' | &b'\t' | &b'\r' | &b'\n'))
+pub fn maybe_space<'input>() -> Parser<'input, impl Parse<'input, Input = u8>> {
+    parse_while(u8::is_ascii_whitespace)
+}
+// any test would follow tautologically from the definition of `parse_while`
+
+/// Match one or more whitespace characters and return a reference to their contiguous slice.
+#[inline(always)]
+#[must_use]
+pub fn need_space<'input>() -> Parser<'input, impl Parse<'input, Input = u8>> {
+    satisfy(u8::is_ascii_whitespace, |_| {
+        String::from("Expected whitespace")
+    }) >> parse_while(u8::is_ascii_whitespace)
 }
 // any test would follow tautologically from the definition of `parse_while`
 
@@ -629,10 +639,10 @@ pub fn comma_separated<'input, Element: Parse<'input, Input = u8>>(
     >,
 > {
     #![allow(clippy::arithmetic_side_effects)]
-    whitespace()
+    maybe_space()
         >> punctuated(
-            element << whitespace(),
-            exact(&b',') << whitespace(),
+            element << maybe_space(),
+            exact(&b',') << maybe_space(),
             allow_trailing,
         )
 }
@@ -835,6 +845,33 @@ pub mod precedence {
         >,
     > {
         #![allow(clippy::arithmetic_side_effects)]
-        punctuated_meaningfully(primary << whitespace(), any_seq(ops) << whitespace(), false)
+        punctuated_meaningfully(
+            primary << maybe_space(),
+            any_seq(ops) << maybe_space(),
+            false,
+        )
+    }
+}
+
+/// Common patterns in programming languages.
+pub mod lang {
+    #[allow(clippy::wildcard_imports)]
+    use super::*;
+
+    /// Parse a `let some_name = expression...;`-style binding.
+    #[inline(always)]
+    #[must_use]
+    pub fn let_expr<'input, P: Parse<'input, Input = u8>>(
+        expression: Parser<'input, P>,
+    ) -> Parser<
+        'input,
+        Both<
+            'input,
+            impl Parse<'input, Input = u8, Output = &'input [u8]>,
+            DiscardLeft<'input, impl Parse<'input, Input = u8>, P>,
+        >,
+    > {
+        exact_seq(b"let") >> need_space() >> snake_case()
+            & maybe_space() >> exact(&b'=') >> maybe_space() >> expression
     }
 }
