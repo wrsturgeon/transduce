@@ -1,6 +1,6 @@
 # Edited from https://hoverbear.org/blog/a-flake-for-your-crate/
 {
-  description = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.description;
+  description = "Zero-copy isomorphic parsing: your code should look like what it parses.";
   inputs = {
     naersk = {
       inputs.nixpkgs.follows = "nixpkgs";
