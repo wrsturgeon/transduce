@@ -1,8 +1,6 @@
 # Edited from https://hoverbear.org/blog/a-flake-for-your-crate/
-let
-  cargo-toml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
-in {
-  description = cargo-toml.package.description;
+{
+  description = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.description;
   inputs = {
     naersk = {
       inputs.nixpkgs.follows = "nixpkgs";
@@ -12,6 +10,7 @@ in {
   };
   outputs = { naersk, nixpkgs, self }:
   let
+    cargo-toml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
     for-all-systems = f: nixpkgs.lib.genAttrs supported-systems (system: f system);
     supported-systems = [ "x86_64-linux" "aarch-linux" "x86_64-darwin" ];
   in {
