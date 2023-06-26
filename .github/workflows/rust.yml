@@ -16,17 +16,5 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-    - name: Format check
-      run: cargo fmt -- --check
-    - name: Build (no features)
-      run: cargo build --no-default-features --verbose
-    - name: Build (all features)
-      run: cargo build --all-features --verbose
-    - name: Test (no features)
-      run: PROPTEST_CASES=100000 cargo test --verbose --no-default-features || cat proptest-regressions/base.txt
-    - name: Test (all features)
-      run: PROPTEST_CASES=100000 cargo test --verbose --all-features || cat proptest-regressions/base.txt
-    - name: Clippy (no features)
-      run: cargo clippy --all-targets --verbose --no-default-features
-    - name: Clippy (all features)
-      run: cargo clippy --all-targets --verbose --all-features
+    - name: ci.sh
+      run: PROPTEST_CASES=1000000 . ci.sh

@@ -8,6 +8,8 @@ then
   exit 1
 fi
 
+. ci.sh
+
 git add -A
 git commit -m "$@"
 git push

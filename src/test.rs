@@ -320,9 +320,14 @@ fn parse_huge_ints() {
 
 #[test]
 fn let_exprs() {
+    #![allow(
+        clippy::let_underscore_untyped,
+        clippy::unwrap_used,
+        let_underscore_drop
+    )]
     let parser = let_expr(digit());
     assert_eq!(parser.parse(b"let a = 0"), Ok((&b"a"[..], 0)));
     assert_eq!(parser.parse(b"let a=0"), Ok((&b"a"[..], 0)));
     assert_eq!(parser.parse(b"let   a   =   0"), Ok((&b"a"[..], 0)));
-    assert!(parser.parse(b"leta = 0").is_err());
+    let _ = parser.parse(b"leta = 0").unwrap_err();
 }

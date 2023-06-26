@@ -510,8 +510,9 @@ pub fn maybe_space<'input>() -> Parser<'input, impl Parse<'input, Input = u8>> {
 #[inline(always)]
 #[must_use]
 pub fn need_space<'input>() -> Parser<'input, impl Parse<'input, Input = u8>> {
+    #![allow(clippy::arithmetic_side_effects)]
     satisfy(u8::is_ascii_whitespace, |_| {
-        String::from("Expected whitespace")
+        string_if_alloc("Expected whitespace")
     }) >> parse_while(u8::is_ascii_whitespace)
 }
 // any test would follow tautologically from the definition of `parse_while`
@@ -871,6 +872,7 @@ pub mod lang {
             DiscardLeft<'input, impl Parse<'input, Input = u8>, P>,
         >,
     > {
+        #![allow(clippy::arithmetic_side_effects)]
         exact_seq(b"let") >> need_space() >> snake_case()
             & maybe_space() >> exact(&b'=') >> maybe_space() >> expression
     }
