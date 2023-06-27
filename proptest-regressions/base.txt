@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc fe9ed5b415e1d058702f692fe4d2a06c1a86f13c13221c567b08360c54847323 # shrinks to mut input = [], mut aux = []
+cc 2d4f99d8867d0e2338b9d427f76c49287684fb43e4415f28fbcb6521971e2b6e # shrinks to input = [0]

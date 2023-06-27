@@ -315,18 +315,29 @@ impl<'input, Input: 'input + Ord + PrintError> Parse<'input> for AnySeq<'_, Inpu
             }
             end_of_input!()
         };
-        // With `alloc`, O(lg n)
+        // With `alloc`: O(lg n)
         #[cfg(feature = "alloc")]
-        for &option in self.0.range(core::slice::from_ref(head)..=input) {
+        for &option in self.0.range(core::slice::from_ref(head)..=input).rev() {
             if let Ok((parsed, etc)) = exact_seq(option).partial(input) {
                 return Ok((parsed, etc));
             }
         }
-        // Without, O(n)
+        // Without: O(n)
         #[cfg(not(feature = "alloc"))]
-        for &option in self.0 {
-            if let Ok((parsed, etc)) = exact_seq(option).partial(input) {
-                return Ok((parsed, etc));
+        {
+            let mut update_me: Option<(Self::Output, &'input [Self::Input])> = None;
+            for &option in self.0 {
+                if let Ok((best_yet, etc)) = exact_seq(option).partial(input) {
+                    if let Some((prev_best_yet, prev_etc)) = update_me {
+                        if etc.len() >= prev_etc.len() {
+                            continue;
+                        }
+                    }
+                    update_me = Some((best_yet, etc));
+                }
+            }
+            if let Some(winner_winner_chicken_dinner) = update_me {
+                return Ok(winner_winner_chicken_dinner);
             }
         }
         match input.split_first() {
@@ -342,7 +353,7 @@ impl<'input, Input: 'input + Ord + PrintError> Parse<'input> for AnySeq<'_, Inpu
         }
     }
 }
-/// Match any of a set of sequences of options. Set represented as a binary tree for efficient lookup.
+/// Match any of a set of sequences of options, preferring the longest applicable. Set represented as a binary tree for efficient lookup.
 #[inline(always)]
 #[must_use]
 pub const fn any_seq<'platonic, 'input, Input: 'input + Ord + PrintError>(
@@ -362,6 +373,18 @@ ptest! {
         assert_eq!(any_seq(Set::from_iter([&*input])).partial(&input).map(|(a, _)| a), Ok(&*input));
         #[cfg(not(feature = "alloc"))]
         assert_eq!(any_seq(&[&input]).partial(&input).map(|(a, _)| a), Ok(&*input));
+    }
+    #[test]
+    #[allow(clippy::indexing_slicing)]
+    fn prop_any_seq_prefix(input: Vec<u8>) {
+        // Construct a set of all prefixes of `input`, including `input` itself (last),
+        // and we should still end up with the whole enchilada
+        #[cfg(feature="alloc")]
+        assert_eq!(any_seq((0..=input.len()).map(|i| &input[..i]).collect()).parse(&input), Ok(&*input));
+        #[cfg(not(feature="alloc"))] {
+            let v: Vec<_> = (0..=input.len()).map(|i| &input[..i]).collect();
+            assert_eq!(any_seq(&v).parse(&input), Ok(&*input));
+        }
     }
 }
 
