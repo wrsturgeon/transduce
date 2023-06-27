@@ -160,12 +160,16 @@ macro_rules! format_if_alloc {
 
 #[cfg(feature = "alloc")]
 /// Heap-allocated string if `alloc` enabled; otherwise, pointer to compile-time memory.
+#[inline(always)]
+#[must_use]
 fn string_if_alloc(s: &'static str) -> Message {
     String::from(s)
 }
 
 #[cfg(not(feature = "alloc"))]
 /// Heap-allocated string if `alloc` enabled; otherwise, pointer to compile-time memory.
+#[inline(always)]
+#[must_use]
 const fn string_if_alloc(s: &'static str) -> Message {
     s
 }
@@ -193,6 +197,7 @@ pub struct Parser<'input, Inside: Parse<'input>>(Inside, PhantomData<&'input ()>
 impl<'input, Inside: Parse<'input>> Parser<'input, Inside> {
     /// Create a Parser without worrying about workarounds like `PhantomData`.
     #[inline(always)]
+    #[must_use]
     pub const fn new(inside: Inside) -> Self {
         Self(inside, PhantomData)
     }
@@ -316,6 +321,7 @@ impl<'input, Left: Parse<'input, Input = Right::Input>, Right: Parse<'input>>
 {
     /// Create an instance without worrying about workarounds like `PhantomData`.
     #[inline(always)]
+    #[must_use]
     pub const fn new(left: Parser<'input, Left>, right: Parser<'input, Right>) -> Self {
         Self(left, right)
     }
@@ -338,6 +344,7 @@ impl<'input, Left: Parse<'input, Input = Right::Input>, Right: Parse<'input>>
 {
     type Output = Parser<'input, DiscardLeft<'input, Left, Right>>;
     #[inline(always)]
+    #[must_use]
     fn shr(self, rhs: Parser<'input, Right>) -> Self::Output {
         self.discard_left(rhs)
     }
@@ -354,6 +361,7 @@ impl<'input, Left: Parse<'input>, Right: Parse<'input, Input = Left::Input>>
 {
     /// Create an instance without worrying about workarounds like `PhantomData`.
     #[inline(always)]
+    #[must_use]
     pub const fn new(left: Parser<'input, Left>, right: Parser<'input, Right>) -> Self {
         Self(left, right)
     }
@@ -378,6 +386,7 @@ impl<'input, Left: Parse<'input>, Right: Parse<'input, Input = Left::Input>>
 {
     type Output = Parser<'input, DiscardRight<'input, Left, Right>>;
     #[inline(always)]
+    #[must_use]
     fn shl(self, rhs: Parser<'input, Right>) -> Self::Output {
         self.discard_right(rhs)
     }
@@ -394,6 +403,7 @@ impl<'input, Left: Parse<'input>, Right: Parse<'input, Input = Left::Input>>
 {
     /// Create an instance without worrying about workarounds like `PhantomData`.
     #[inline(always)]
+    #[must_use]
     pub const fn new(left: Parser<'input, Left>, right: Parser<'input, Right>) -> Self {
         Self(left, right)
     }
@@ -418,6 +428,7 @@ impl<'input, Left: Parse<'input>, Right: Parse<'input, Input = Left::Input>>
 {
     type Output = Parser<'input, Both<'input, Left, Right>>;
     #[inline(always)]
+    #[must_use]
     fn bitand(self, rhs: Parser<'input, Right>) -> Self::Output {
         self.both(rhs)
     }
@@ -438,6 +449,7 @@ impl<
 {
     /// Create an instance without worrying about workarounds like `PhantomData`.
     #[inline(always)]
+    #[must_use]
     pub const fn new(left: Parser<'input, Left>, right: Parser<'input, Right>) -> Self {
         Self(left, right)
     }
@@ -469,6 +481,7 @@ impl<
 {
     type Output = Parser<'input, Either<'input, Left, Right>>;
     #[inline(always)]
+    #[must_use]
     fn bitor(self, rhs: Parser<'input, Right>) -> Self::Output {
         self.either(rhs)
     }
@@ -491,6 +504,7 @@ impl<
 {
     /// Create an instance without worrying about workarounds like `PhantomData`.
     #[inline(always)]
+    #[must_use]
     pub const fn new(left: Parser<'input, Left>, right: Right) -> Self {
         Self(left, right)
     }
@@ -525,16 +539,16 @@ impl<
 {
     type Output = Parser<'input, Pipe<'input, Left, FinalOutput, Right>>;
     #[inline(always)]
+    #[must_use]
     fn bitxor(self, rhs: Right) -> Self::Output {
         self.pipe(rhs)
     }
 }
 
-/// Read a series of characters (actually `u8`s) into this type.
-pub trait Read<'input, Input: print_error::PrintError> {
-    /// Parser that can translate from a slice of `Input`s to this type.
-    type InternalParser: Parse<'input, Input = Input, Output = Self>;
-    /// Construct a parser that can translate from a slice of `Input`s to this type.
-    #[must_use]
-    fn parser() -> Parser<'input, Self::InternalParser>;
+/// Read a series of items (of generic type `Input`) into this type.
+pub trait Read<'input, Input: print_error::PrintError>: Sized {
+    /// Parse a list of `Input`s into this type.
+    /// # Errors
+    /// If parsing fails, if we run out of input, or if we have leftover input afterward.
+    fn parse(&self, input: &'input [Input]) -> Result<Self, Message>;
 }
